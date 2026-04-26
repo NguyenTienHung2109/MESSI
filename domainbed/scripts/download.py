@@ -13,6 +13,7 @@ import os
 
 from wilds.datasets.camelyon17_dataset import Camelyon17Dataset
 from wilds.datasets.fmow_dataset import FMoWDataset
+from wilds.datasets.iwildcam_dataset import IWildCamDataset
 
 
 # utils #######################################################################
@@ -308,6 +309,94 @@ def download_sviro(data_dir):
 
     os.rename(os.path.join(data_dir, "SVIRO_DOMAINBED"),
               full_path)
+
+
+# iWildCam (WILDS) ############################################################
+
+def download_iwildcam(data_dir):
+    """
+    iWildCam (WILDS): camera trap species classification, ~324 location domains.
+    ~12 GB download → extracts to <data_dir>/iwildcam_v2.0/
+    """
+    IWildCamDataset(root_dir=data_dir, download=True)
+
+
+def download_metashift(data_dir):
+    """
+    MetaShift: extracts only the image IDs referenced by existing split CSVs
+    under <data_dir>/metashift/splits/. Run scripts/metashift_build_splits.py
+    first to generate the manifests; this function then performs the
+    targeted extraction from the GQA images.zip archive.
+
+    Sequence:
+      1. Fetch metadata pickle (~15 MB) into <data_dir>/metashift/meta_data/.
+      2. If <data_dir>/metashift/raw/gqa_images.zip is missing, download it
+         (~21.8 GB) from the Stanford GQA mirror.
+      3. Read every CSV in <data_dir>/metashift/splits/, collect the union
+         of vg_image_id values, and extract only those into
+         <data_dir>/metashift/raw/images/.
+      4. Optionally delete the zip after extraction (controlled by
+         METASHIFT_KEEP_ZIP env var; default deletes).
+    """
+    import os
+    import pickle
+    import urllib.request
+    import zipfile
+    from glob import glob
+
+    base = os.path.join(data_dir, "metashift")
+    meta_dir = os.path.join(base, "meta_data")
+    raw_dir = os.path.join(base, "raw")
+    img_dir = os.path.join(raw_dir, "images")
+    splits_dir = os.path.join(base, "splits")
+    os.makedirs(meta_dir, exist_ok=True)
+    os.makedirs(img_dir, exist_ok=True)
+
+    pkl_path = os.path.join(meta_dir, "full-candidate-subsets.pkl")
+    if not os.path.exists(pkl_path):
+        url = "https://github.com/Weixin-Liang/MetaShift/raw/main/dataset/meta_data/full-candidate-subsets.pkl"
+        print(f"Fetching metadata pickle from {url}")
+        urllib.request.urlretrieve(url, pkl_path)
+
+    csv_paths = glob(os.path.join(splits_dir, "*", "*.csv"))
+    if not csv_paths:
+        raise RuntimeError(
+            f"No split CSVs under {splits_dir}. Run scripts/metashift_build_splits.py first."
+        )
+    needed = set()
+    import csv as csvmod
+    for p in csv_paths:
+        with open(p) as f:
+            r = csvmod.DictReader(f)
+            for row in r:
+                needed.add(int(row["vg_image_id"]))
+    print(f"Need {len(needed)} unique image ids across {len(csv_paths)} splits.")
+
+    have = {int(os.path.splitext(os.path.basename(f))[0])
+            for f in os.listdir(img_dir) if f.endswith(".jpg")}
+    missing = needed - have
+    print(f"Already have: {len(have & needed)}; missing: {len(missing)}")
+    if not missing:
+        return
+
+    zip_path = os.path.join(raw_dir, "gqa_images.zip")
+    if not os.path.exists(zip_path):
+        url = "https://downloads.cs.stanford.edu/nlp/data/gqa/images.zip"
+        print(f"Downloading GQA images.zip (~21.8 GB) to {zip_path}")
+        os.system(f'wget -c -O "{zip_path}" "{url}"')
+
+    with zipfile.ZipFile(zip_path) as zf:
+        for vid in sorted(missing):
+            arcname = f"images/{vid}.jpg"
+            try:
+                with zf.open(arcname) as src, open(os.path.join(img_dir, f"{vid}.jpg"), "wb") as dst:
+                    dst.write(src.read())
+            except KeyError:
+                print(f"WARN: {arcname} missing in zip")
+
+    if not os.environ.get("METASHIFT_KEEP_ZIP"):
+        print(f"Deleting {zip_path} (set METASHIFT_KEEP_ZIP=1 to retain)")
+        os.remove(zip_path)
 
 
 if __name__ == "__main__":

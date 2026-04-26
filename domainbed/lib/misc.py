@@ -170,14 +170,55 @@ def split_dataset(dataset, n, seed=0):
     """
     Return a pair of datasets corresponding to a random split of the given
     dataset, with n datapoints in the first dataset and the rest in the last,
-    using the given random seed
+    using the given random seed.
+
+    If `dataset` exposes a `pre_split` attribute as {'out': [...], 'in': [...]}
+    of index lists, that split is honored verbatim and `n` / `seed` are ignored
+    (used by class-stratified pre-computed splits, e.g. MetaShift_K).
     """
+    pre = getattr(dataset, "pre_split", None)
+    if pre is not None and "in" in pre and "out" in pre:
+        return _SplitDataset(dataset, list(pre["out"])), _SplitDataset(dataset, list(pre["in"]))
     assert (n <= len(dataset))
     keys = list(range(len(dataset)))
     np.random.RandomState(seed).shuffle(keys)
     keys_1 = keys[:n]
     keys_2 = keys[n:]
     return _SplitDataset(dataset, keys_1), _SplitDataset(dataset, keys_2)
+
+
+def stratified_subsample_indices(labels, n_target, seed):
+    """Return n_target indices into `labels` with class proportions preserved.
+
+    Per-class quota = floor(n_target * count_c / total). Remainder slots are
+    distributed by largest-remainder. Within each class, samples are picked
+    by a seeded RandomState shuffle. Returns a sorted Python list of indices.
+    """
+    labels = np.asarray(labels)
+    n = len(labels)
+    if n_target >= n:
+        return list(range(n))
+    rng = np.random.RandomState(seed)
+
+    classes, counts = np.unique(labels, return_counts=True)
+    raw = n_target * counts / n
+    quotas = np.floor(raw).astype(int)
+    remainder = n_target - int(quotas.sum())
+    if remainder > 0:
+        residuals = raw - quotas
+        order = np.argsort(-residuals)
+        for i in order[:remainder]:
+            quotas[i] += 1
+    quotas = np.minimum(quotas, counts)
+
+    keep = []
+    for cls, q in zip(classes, quotas):
+        if q <= 0:
+            continue
+        idx = np.where(labels == cls)[0]
+        rng.shuffle(idx)
+        keep.extend(int(x) for x in idx[:q])
+    return sorted(keep)
 
 
 def random_pairs_of_minibatches(minibatches):

@@ -13,7 +13,7 @@ def _hparams(algorithm, dataset, random_seed):
     Global registry of hyperparams. Each entry is a (default, random) tuple.
     New algorithms / networks / etc. should add entries here.
     """
-    SMALL_IMAGES = ['Debug28', 'RotatedMNIST', 'ColoredMNIST']
+    SMALL_IMAGES = ['Debug28', 'RotatedMNIST', 'ColoredMNIST', 'ColoredMNIST_E', 'ColoredMNIST_K']
 
     hparams = {}
 
@@ -155,6 +155,22 @@ def _hparams(algorithm, dataset, random_seed):
         _hparam('batch_size', 32, lambda r: int(2 ** r.uniform(3, 5)))
     else:
         _hparam('batch_size', 32, lambda r: int(2 ** r.uniform(3, 5.5)))
+
+    if dataset == "ColoredMNIST_E":
+        _hparam('num_environments', 8,
+                lambda r: int(r.choice([2, 4, 8, 16, 32, 64])))
+
+    if dataset == "ColoredMNIST_K":
+        _hparam('num_source_domains', 9, lambda r: 9)
+        _hparam('test_size', 10000, lambda r: 10000)
+        _hparam('patch_size', 4, lambda r: int(r.choice([4, 7])))
+
+    if dataset == "MetaShift_K":
+        _hparam('class_set', 'cat_dog_horse_elephant_bird', lambda r: 'cat_dog_horse_elephant_bird')
+        _hparam('K', 8, lambda r: int(r.choice([4, 6, 8])))
+        _hparam('split_seed', 0, lambda r: 0)
+        _hparam('total_per_class', 240, lambda r: 240)
+        _hparam('single_test', True, lambda r: True)
 
     if algorithm in ['DANN', 'CDANN'] and dataset in SMALL_IMAGES:
         _hparam('lr_g', 1e-3, lambda r: 10 ** r.uniform(-4.5, -2.5))

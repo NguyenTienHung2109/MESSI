@@ -35,7 +35,10 @@ class InfiniteDataLoader:
         self._infinite_iterator = iter(torch.utils.data.DataLoader(
             dataset,
             num_workers=num_workers,
-            batch_sampler=_InfiniteSampler(batch_sampler)
+            batch_sampler=_InfiniteSampler(batch_sampler),
+            pin_memory=True,
+            persistent_workers=(num_workers > 0),
+            prefetch_factor=4 if num_workers > 0 else None,
         ))
 
     def __iter__(self):
@@ -60,7 +63,10 @@ class FastDataLoader:
         self._infinite_iterator = iter(torch.utils.data.DataLoader(
             dataset,
             num_workers=num_workers,
-            batch_sampler=_InfiniteSampler(batch_sampler)
+            batch_sampler=_InfiniteSampler(batch_sampler),
+            pin_memory=True,
+            persistent_workers=(num_workers > 0),
+            prefetch_factor=4 if num_workers > 0 else None,
         ))
 
         self._length = len(batch_sampler)

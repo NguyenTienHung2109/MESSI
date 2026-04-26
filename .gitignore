@@ -1,5 +1,6 @@
 # Datasets
 domainbed/data/
+data/
 
 # Training outputs
 train_output/

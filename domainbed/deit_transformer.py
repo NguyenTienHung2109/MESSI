@@ -15,47 +15,87 @@ from domainbed import vision_transformer as vit_module
 # Backbone
 # ---------------------------------------------------------------------------
 
+_DEIT_CONFIGS = {
+    # name -> (embed_dim, depth, num_heads, pretrained_url)
+    'deit_tiny_patch16_224': (
+        192, 12, 3,
+        'https://dl.fbaipublicfiles.com/deit/deit_tiny_distilled_patch16_224-b40b3cf7.pth',
+    ),
+    'deit_small_patch16_224': (
+        384, 12, 6,
+        'https://dl.fbaipublicfiles.com/deit/deit_small_distilled_patch16_224-649709d9.pth',
+    ),
+    'deit_base_patch16_224': (
+        768, 12, 12,
+        'https://dl.fbaipublicfiles.com/deit/deit_base_distilled_patch16_224-df68dfff.pth',
+    ),
+}
+
+
 class DeiTFeaturizer(nn.Module):
     """
-    Wraps the repo's VisionTransformer (DeiT-small config) to expose the
-    CLS-token feature vector.  All layers are dense ('F') — no MoE, no Tutel.
-    Instantiates VisionTransformer directly, bypassing timm's model registry
-    so there is no conflict with the repo's @register_model decorators.
-    embed_dim = 384 for deit_small.
+    Wraps the repo's VisionTransformer (DeiT tiny/small/base config) to expose
+    the CLS-token feature vector. All layers are dense ('F') — no MoE, no Tutel.
+
+    Model is selected by `model_name`:
+        'deit_tiny_patch16_224'  → embed_dim=192
+        'deit_small_patch16_224' → embed_dim=384  (default)
+        'deit_base_patch16_224'  → embed_dim=768
     """
-    def __init__(self, pretrained=True):
+    def __init__(self, pretrained=True, model_name='deit_small_patch16_224',
+                 img_size=224, patch_size=16, in_chans=3):
         super().__init__()
+        if model_name not in _DEIT_CONFIGS:
+            raise ValueError(
+                f"Unknown DeiT model '{model_name}'. "
+                f"Supported: {list(_DEIT_CONFIGS)}"
+            )
+        embed_dim, depth, num_heads, ckpt_url = _DEIT_CONFIGS[model_name]
+
+        self.model_name = model_name
         self.vit = vit_module.VisionTransformer(
-            img_size=224, patch_size=16, in_chans=3,
-            num_classes=0,           # no head — returns raw features
-            embed_dim=384, depth=12, num_heads=6,
+            img_size=img_size, patch_size=patch_size, in_chans=in_chans,
+            num_classes=0,              # no head — returns raw features
+            embed_dim=embed_dim, depth=depth, num_heads=num_heads,
             mlp_ratio=4., qkv_bias=True,
-            distilled=True,          # DeiT-small checkpoint has distillation token
+            distilled=True,             # distilled checkpoints have dist token
             drop_path_rate=0.1,
-            moe_layers=['F'] * 12,   # all-dense, no Tutel
+            moe_layers=['F'] * depth,   # all-dense, no Tutel
             num_experts=1,
             router='cosine_top',
         )
-        self.n_outputs = 384
+        self.n_outputs = embed_dim
 
         if pretrained:
+            shape_changed = (img_size, patch_size, in_chans) != (224, 16, 3)
+            if shape_changed:
+                print(f'[DeiTFeaturizer:{model_name}] shape override '
+                      f'(img_size={img_size}, patch_size={patch_size}, '
+                      f'in_chans={in_chans}) — patch_embed.proj and pos_embed '
+                      f'will be random-init; transformer blocks still load.')
             checkpoint = torch.hub.load_state_dict_from_url(
-                'https://dl.fbaipublicfiles.com/deit/deit_small_distilled_patch16_224-649709d9.pth',
-                map_location='cpu', check_hash=True,
+                ckpt_url, map_location='cpu', check_hash=True,
             )
             state = checkpoint.get('model', checkpoint)
             # Drop classifier head keys — not present when num_classes=0
             state = {k: v for k, v in state.items()
                      if not k.startswith('head')}
+            if shape_changed:
+                # Drop shape-incompatible keys explicitly so load_state_dict
+                # doesn't error on size mismatch even with strict=False.
+                own = self.vit.state_dict()
+                state = {k: v for k, v in state.items()
+                         if k in own and own[k].shape == v.shape}
             missing, _ = self.vit.load_state_dict(state, strict=False)
             if missing:
-                print(f'[DeiTFeaturizer] missing keys (expected if head removed): {missing}')
+                print(f'[DeiTFeaturizer:{model_name}] missing keys '
+                      f'(expected if head removed): {missing}')
 
     def forward(self, x):
         # forward_features returns (cls, dist) tuple for distilled DeiT
         out = self.vit.forward_features(x)
         if isinstance(out, tuple):
-            return out[0]   # CLS token → (B, 384)
+            return out[0]   # CLS token → (B, embed_dim)
         return out
 
 

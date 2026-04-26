@@ -64,6 +64,24 @@ if __name__ == "__main__":
                         help='If set, write structured sweep logs to this directory.')
     parser.add_argument('--sweep_run_id', type=str, default=None,
                         help='Human-readable run ID for sweep logging (e.g. gmoe_N6_K2_PR00).')
+    parser.add_argument('--max_samples_per_env', type=int, default=None,
+                        help='Truncate each TRAINING env in_split to this many samples '
+                             '(after holdout split). Used for K-sweep experiments to keep '
+                             'total training data fixed when varying #source domains. '
+                             'Test envs (those in --test_envs) are not truncated.')
+    parser.add_argument('--stratified_subsample',
+                        type=lambda s: s.lower() not in ('false', '0', 'no'),
+                        default=True,
+                        help='When --max_samples_per_env is set, subsample with class '
+                             'proportions preserved (largest-remainder per-class quota) '
+                             'instead of taking the first N. Pass --stratified_subsample false '
+                             'to reproduce the old sequential behavior.')
+    parser.add_argument('--source_envs', type=int, nargs='+', default=None,
+                        help='Whitelist: env indices to use as TRAINING sources. '
+                             'If set, only these envs are used for training (other non-test '
+                             'envs are ignored). Useful for datasets with many envs (e.g. iWildCam '
+                             '323 locations) where listing every excluded env in --test_envs '
+                             'would be unwieldy.')
     args = parser.parse_args()
 
     # If we ever want to implement checkpointing, just persist these values
@@ -127,8 +145,7 @@ if __name__ == "__main__":
 
 
     if 'Debug' not in args.dataset:
-        wandb.login(key="b1d6eed8871c7668a889ae74a621b5dbd2f3b070")
-
+        # Rely on `wandb login` / ~/.netrc / $WANDB_API_KEY for credentials.
         _NEVER_SHOW = {
             'data_augmentation', 'resnet18', 'resnet_dropout',
             'nonlinear_classifier', 'class_balanced',
@@ -144,8 +161,8 @@ if __name__ == "__main__":
             run_name = run_name[:125] + '...'
 
         wandb.init(
-            project='sparse-moe',
-            entity='letuanhf-hanoi-university-of-science-and-technology',
+            project='messi',
+            entity='hunghn2003',
             name=run_name,
             config={
                 'dataset': args.dataset,
@@ -198,13 +215,63 @@ if __name__ == "__main__":
     if args.task == "domain_adaptation" and len(uda_splits) == 0:
         raise ValueError("Not enough unlabeled samples for domain adaptation.")
 
+    # K-sweep support: truncate each TRAINING env's in_split to max_samples_per_env.
+    # Non-training envs (test envs, or envs not in --source_envs whitelist) are
+    # left full so evaluation metrics are unbiased.
+    if args.max_samples_per_env is not None:
+        def _is_training_env(i):
+            if args.source_envs is not None:
+                return i in args.source_envs
+            return i not in args.test_envs
+        truncated_in_splits = []
+        for env_i, (in_, in_weights) in enumerate(in_splits):
+            if not _is_training_env(env_i):
+                truncated_in_splits.append((in_, in_weights))
+                continue
+            if len(in_) > args.max_samples_per_env:
+                if args.stratified_subsample:
+                    env_underlying = in_.underlying_dataset
+                    if hasattr(env_underlying, 'get_labels'):
+                        env_labels = env_underlying.get_labels().numpy()
+                        split_labels = env_labels[np.asarray(in_.keys)]
+                    else:
+                        split_labels = np.array(
+                            [int(in_[i][1]) for i in range(len(in_))])
+                    keep = misc.stratified_subsample_indices(
+                        split_labels, args.max_samples_per_env,
+                        seed=misc.seed_hash(args.trial_seed, env_i, 'subsample'))
+                    in_ = torch.utils.data.Subset(in_, keep)
+                    cls_counts = np.bincount(split_labels[keep])
+                    top1 = 100.0 * cls_counts.max() / cls_counts.sum()
+                    print(f'[max_samples_per_env] env{env_i}: size={len(in_)} '
+                          f'#classes={int((cls_counts > 0).sum())} '
+                          f'top-1={top1:.1f}% (stratified)')
+                else:
+                    in_ = torch.utils.data.Subset(
+                        in_, list(range(args.max_samples_per_env)))
+                    print(f'[max_samples_per_env] env{env_i}: '
+                          f'size={len(in_)} (sequential)')
+            else:
+                print(f'[max_samples_per_env] env{env_i}: '
+                      f'size={len(in_)} (no truncation)')
+            truncated_in_splits.append((in_, in_weights))
+        in_splits = truncated_in_splits
+
+    # Decide which envs are training:
+    #   - If --source_envs is set: whitelist (only listed envs are training).
+    #   - Else: blacklist (any env not in --test_envs is training).
+    def _is_training_env(i):
+        if args.source_envs is not None:
+            return i in args.source_envs
+        return i not in args.test_envs
+
     train_loaders = [InfiniteDataLoader(
         dataset=env,
         weights=env_weights,
         batch_size=hparams['batch_size'],
         num_workers=dataset.N_WORKERS)
         for i, (env, env_weights) in enumerate(in_splits)
-        if i not in args.test_envs]
+        if _is_training_env(i)]
 
     uda_loaders = [InfiniteDataLoader(
         dataset=env,
@@ -214,18 +281,42 @@ if __name__ == "__main__":
         for i, (env, env_weights) in enumerate(uda_splits)
         if i in args.test_envs]
 
-    eval_loaders = [FastDataLoader(
-        dataset=env,
-        batch_size=64,
-        num_workers=dataset.N_WORKERS)
-        for env, _ in (in_splits + out_splits + uda_splits)]
-    eval_weights = [None for _, weights in (in_splits + out_splits + uda_splits)]
-    eval_loader_names = ['env{}_in'.format(i)
-                         for i in range(len(in_splits))]
-    eval_loader_names += ['env{}_out'.format(i)
-                          for i in range(len(out_splits))]
-    eval_loader_names += ['env{}_uda'.format(i)
-                          for i in range(len(uda_splits))]
+    # Decide which envs to evaluate. With many-domain datasets (e.g. iWildCam, 323
+    # envs), evaluating ALL envs spawns thousands of worker processes (323 × 2 ×
+    # N_WORKERS) and crashes the machine. We filter to relevant envs only.
+    if args.source_envs is not None:
+        eval_env_indices = sorted(set(args.source_envs) | set(args.test_envs))
+    elif len(in_splits) > 50:
+        # Heuristic: dataset has many envs but no whitelist → eval test + first
+        # 5 training envs as a sample (avoids OOM on iWildCam-like cases).
+        train_sample = [i for i in range(len(in_splits)) if i not in args.test_envs][:5]
+        eval_env_indices = sorted(set(args.test_envs) | set(train_sample))
+        print(f'[eval-filter] dataset has {len(in_splits)} envs > 50; '
+              f'evaluating only test_envs + first 5 training envs: {eval_env_indices}')
+    else:
+        eval_env_indices = list(range(len(in_splits)))
+
+    eval_loaders = []
+    eval_weights = []
+    eval_loader_names = []
+    # in_splits
+    for i in eval_env_indices:
+        eval_loaders.append(FastDataLoader(
+            dataset=in_splits[i][0], batch_size=64, num_workers=dataset.N_WORKERS))
+        eval_weights.append(None)
+        eval_loader_names.append(f'env{i}_in')
+    # out_splits
+    for i in eval_env_indices:
+        eval_loaders.append(FastDataLoader(
+            dataset=out_splits[i][0], batch_size=64, num_workers=dataset.N_WORKERS))
+        eval_weights.append(None)
+        eval_loader_names.append(f'env{i}_out')
+    # uda_splits (only test envs typically have these)
+    for i, (env, _) in enumerate(uda_splits):
+        eval_loaders.append(FastDataLoader(
+            dataset=env, batch_size=64, num_workers=dataset.N_WORKERS))
+        eval_weights.append(None)
+        eval_loader_names.append(f'env{i}_uda')
 
     algorithm_class = algorithms.get_algorithm_class(args.algorithm)
     algorithm = algorithm_class(dataset.input_shape, dataset.num_classes,
@@ -277,9 +368,11 @@ if __name__ == "__main__":
     last_results_keys = None
     for step in range(start_step, n_steps):
         step_start_time = time.time()
-        minibatches_device = [(x.to(device), y.to(device)) for x, y in next(train_minibatches_iterator)]
+        # non_blocking=True pairs with pin_memory=True in DataLoader for async H2D transfer.
+        minibatches_device = [(x.to(device, non_blocking=True), y.to(device, non_blocking=True))
+                              for x, y in next(train_minibatches_iterator)]
         if args.task == "domain_adaptation":
-            uda_device = [x.to(device) for x, _ in next(uda_minibatches_iterator)]
+            uda_device = [x.to(device, non_blocking=True) for x, _ in next(uda_minibatches_iterator)]
         else:
             uda_device = None
         step_vals = algorithm.update(minibatches_device)
