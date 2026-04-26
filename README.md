@@ -6,6 +6,70 @@
 
 Wondering why GMoEs have astonishing performance? 🤯 Let's investigate the generalization ability of model architecture itself and see the great potentials of Sparse Mixture-of-Experts (MoE) architecture.
 
+## Quickstart: K-domain sweeps on iWildCam (WILDS) and MetaShift
+
+### 0. Clone & install
+
+```sh
+git clone https://github.com/NguyenTienHung2109/messi.git
+cd messi
+
+pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu116
+pip install --upgrade git+https://github.com/microsoft/tutel@main
+pip install -r requirements.txt
+pip install wilds          # required for iWildCam
+```
+
+### 1. iWildCam K-sweep (WILDS)
+
+```sh
+# (a) Download iWildCam (~12 GB) → domainbed/data/iwildcam_v2.0/
+python -c "from wilds.datasets.iwildcam_dataset import IWildCamDataset; \
+           IWildCamDataset(root_dir='domainbed/data', download=True)"
+
+# (b) Pick balanced source/test domains; emits k_sweep_setup.json
+python scripts/iwildcam_pick_domains.py
+
+# (c) Run sweep over K ∈ {4, 8, 10, 12, 14, 16}, seed 0
+bash scripts/run_iwildcam_k_sweep.sh CORAL              # baseline
+bash scripts/run_iwildcam_k_sweep.sh GMOE_InvMMD        # MESSI variant
+# Optional 2nd arg = parallel jobs, e.g. `bash ... CORAL 2`
+# Outputs: multi_dataset/test_<ALGO>_iwildcam_k/K<K>_seed0/
+```
+
+### 2. MetaShift K-sweep
+
+MetaShift needs splits **before** the targeted image extraction (extractor reads split CSVs to know which IDs to pull from the GQA zip).
+
+```sh
+# (a) Fetch the metadata pickle (~15 MB) only
+python -c "import os, urllib.request; \
+           os.makedirs('data/metashift/meta_data', exist_ok=True); \
+           urllib.request.urlretrieve( \
+             'https://github.com/Weixin-Liang/MetaShift/raw/main/dataset/meta_data/full-candidate-subsets.pkl', \
+             'data/metashift/meta_data/full-candidate-subsets.pkl')"
+
+# (b) Build splits for K ∈ {4,6,8} × seeds {0,1,2} (5-class, N=240 per class)
+for K in 4 6 8; do for S in 0 1 2; do
+  python scripts/metashift_build_splits.py \
+    --class-set cat_dog_horse_elephant_bird --K $K --seed $S \
+    --total-per-class 240 --single-test
+done; done
+
+# (c) Download GQA images.zip (~21.8 GB) and extract only IDs referenced by the splits
+python -c "from domainbed.scripts.download import download_metashift; download_metashift('data')"
+# (set METASHIFT_KEEP_ZIP=1 in env to retain the 21.8 GB zip after extraction)
+
+# (d) Run sweep (K ∈ {4,6,8}, seeds {0,1,2})
+bash scripts/run_metashift_k_sweep.sh ERM
+bash scripts/run_metashift_k_sweep.sh GMOE_InvMMD
+# Outputs: multi_dataset/test_<ALGO>_metashift_k/K<K>_seed<S>/
+```
+
+Per-run logs land in `multi_dataset/logs/`. A run is marked complete when its output dir contains a `done` file; re-running the sweep skips completed cells.
+
+
+
 ### Preparation
 
 ```sh
