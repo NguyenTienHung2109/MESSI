@@ -550,10 +550,11 @@ class WILDSIWildCam(WILDSDataset):
     N_STEPS = 7501
     CHECKPOINT_FREQ = 500
     # K-sweep math: train_loaders=K + eval_loaders=2*(K+|test|) + their workers
-    # all live as forked processes. With N_WORKERS=8 at K=16, that's ~432
-    # workers each holding the WILDS dataset object — tips a 32GB box into
-    # OOM. Keep workers low; 2 is enough for a 16GB GPU + ResNet50/DeiT-tiny.
-    N_WORKERS = 2
+    # all live as forked processes. At K=16 even N_WORKERS=2 gives 108 forked
+    # workers each holding the WILDS dataset object via shared memory,
+    # blowing past 32GB RAM (observed OOM-kill with shmem-rss=16GB). Use
+    # N_WORKERS=0 (main-process loading) to keep K=16 runnable.
+    N_WORKERS = 0
 
     def __init__(self, root, test_envs, hparams):
         from wilds.datasets.iwildcam_dataset import IWildCamDataset
