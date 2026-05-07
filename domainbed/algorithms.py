@@ -1021,9 +1021,9 @@ class MESSI(MESSIVariantBase):
     def __init__(self, input_shape, num_classes, num_domains, hparams):
         super().__init__(input_shape, num_classes, num_domains, hparams)
         self.lambda_inv = hparams.get("lambda_inv", 0.01)
-        self.lambda_sp = hparams.get("lambda_sp", 0.01)
-        self.lambda_bal = hparams.get("lambda_bal", 0.01)
-        self.lambda_div = hparams.get("lambda_div", 0.01)
+        self.lambda_sp = hparams.get("lambda_sp", 0.02)
+        self.lambda_bal = hparams.get("lambda_bal", 0.02)
+        self.lambda_div = hparams.get("lambda_div", 0.02)
         inv_type = hparams.get("inv_type", "A")
         if inv_type not in self._VALID_INV_TYPES:
             raise ValueError(
