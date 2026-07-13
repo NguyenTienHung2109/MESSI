@@ -18,12 +18,45 @@ from domainbed import datasets
 from domainbed import hparams_registry
 from domainbed import algorithms
 from domainbed import networks
+from domainbed.scripts import train as train_script
 
-from parameterized import parameterized
+try:
+    from parameterized import parameterized
+except ImportError:
+    class _ParameterizedFallback:
+        @staticmethod
+        def expand(cases):
+            def decorate(fn):
+                def wrapped(self):
+                    for case in cases:
+                        if not isinstance(case, tuple):
+                            case = (case,)
+                        with self.subTest(case=case):
+                            fn(self, *case)
+                return wrapped
+            return decorate
+
+    parameterized = _ParameterizedFallback()
 
 from domainbed.test import helpers
 
 class TestDatasets(unittest.TestCase):
+
+    def test_iwildcam_erm_dataset_registered(self):
+        cls = datasets.get_dataset_class("WILDSIWildCamERM")
+        self.assertIs(cls, datasets.WILDSIWildCamERM)
+        self.assertEqual(datasets.num_environments("WILDSIWildCamERM"), 5)
+
+    def test_iwildcam_erm_dataset_disables_group_sampler(self):
+        self.assertIsNone(getattr(datasets.WILDSIWildCamERM, "GROUP_SAMPLER_K", None))
+        self.assertIsNone(getattr(datasets.WILDSIWildCamERM, "GROUP_SAMPLER_K_BATCH", None))
+        self.assertEqual(datasets.WILDSIWildCam.GROUP_SAMPLER_K, 4)
+        self.assertEqual(datasets.WILDSIWildCam.GROUP_SAMPLER_K_BATCH, 8)
+
+    def test_iwildcam_erm_default_eval_metric(self):
+        self.assertEqual(train_script._default_eval_metric("WILDSIWildCamERM"), "f1")
+        self.assertEqual(train_script._default_eval_metric("WILDSIWildCam"), "f1")
+        self.assertEqual(train_script._default_eval_metric("PACS"), "acc")
 
     @parameterized.expand(itertools.product(datasets.DATASETS))
     @unittest.skipIf('DATA_DIR' not in os.environ, 'needs DATA_DIR environment '

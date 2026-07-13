@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""
+"""DEPRECATED (2026-05-01): superseded by the WILDS-official-split refactor.
+WILDSIWildCam now exposes 5 envs by metadata.csv split, so the location IDs
+emitted by this helper no longer reference valid env indices. Use
+scripts/run_iwildcam_paper.sh instead.
+
 iwildcam_k_config.py — emit CLI fragments for the iWildCam K-sweep experiment.
 
 Reads `domainbed/data/iwildcam_v2.0/k_sweep_setup.json` (produced by

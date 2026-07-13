@@ -30,6 +30,7 @@ from domainbed import networks
 # from domainbed import resnet_variants
 import torchvision.models as models
 from domainbed.losses.moe_specialization_losses import OrthoLoss, VarianceLoss
+from domainbed.losses import gmoe_utils as gmoe_loss_utils
 from domainbed.losses.gmoe_utils import *
 from domainbed.deit_transformer import *
 
@@ -68,6 +69,7 @@ ALGORITHMS = [
     'GMOE_Full',
     'GMOE_InvMMD',
     'GMOE_InvOT',
+    'rMESSI_InvOT',
     'GMOE_InvAdv',
     'GMOE_InvED'
 ]
@@ -253,9 +255,14 @@ class AbstractMMD(ERM):
         penalty = 0
         nmb = len(minibatches)
 
-        features = [self.featurizer(xi) for xi, _ in minibatches]
-        classifs = [self.classifier(fi) for fi in features]
+        inputs = [xi for xi, _ in minibatches]
         targets = [yi for _, yi in minibatches]
+        domain_sizes = [len(xi) for xi in inputs]
+
+        all_features = self.featurizer(torch.cat(inputs))
+        all_classifs = self.classifier(all_features)
+        features = all_features.split(domain_sizes)
+        classifs = all_classifs.split(domain_sizes)
 
         for i in range(nmb):
             objective += F.cross_entropy(classifs[i], targets[i])
@@ -800,7 +807,19 @@ class GMoEVariantBase(nn.Module):
     Subclasses implement update() with their specific loss combination.
     """
     NUM_EXPERTS = 6
-    EXPERT_DIM = 256  # r in the paper
+    EXPERT_MLP_RATIO = 4  # FFN-style expansion: hidden = mlp_ratio * embed_dim
+
+    @staticmethod
+    def _resolve_moe_dim(raw_moe_dim, model_name, in_dim):
+        if raw_moe_dim == 'auto':
+            return 384 if model_name == 'resnet50' else int(in_dim)
+        if raw_moe_dim is None:
+            return int(in_dim)
+        if isinstance(raw_moe_dim, str) and raw_moe_dim.lower() == 'none':
+            return int(in_dim)
+        if int(raw_moe_dim) == 0:
+            return int(in_dim)
+        return int(raw_moe_dim)
 
     def __init__(self, input_shape, num_classes, num_domains, hparams):
         super().__init__()
@@ -809,19 +828,34 @@ class GMoEVariantBase(nn.Module):
         self.num_domains = num_domains
 
         model_name = hparams.get('model', 'deit_small_patch16_224')
-        in_chans = int(input_shape[0])
-        img_size = int(input_shape[1])
-        patch_size = int(hparams.get('patch_size', 16))
-        pretrained = bool(hparams.get('pretrained', True))
-        self.featurizer = DeiTFeaturizer(
-            pretrained=pretrained, model_name=model_name,
-            img_size=img_size, patch_size=patch_size, in_chans=in_chans,
-        ).cuda()
+        if model_name.startswith('deit_'):
+            in_chans = int(input_shape[0])
+            img_size = int(input_shape[1])
+            patch_size = int(hparams.get('patch_size', 16))
+            pretrained = bool(hparams.get('pretrained', True))
+            self.featurizer = DeiTFeaturizer(
+                pretrained=pretrained, model_name=model_name,
+                img_size=img_size, patch_size=patch_size, in_chans=in_chans,
+            ).cuda()
+        elif model_name == 'resnet50':
+            self.featurizer = networks.ResNet(input_shape, hparams).cuda()
+        else:
+            raise ValueError(
+                "GMoEVariantBase supports model='resnet50' or a DeiT model "
+                f"name starting with 'deit_', got {model_name!r}"
+            )
+        num_experts = int(hparams.get('num_experts', self.NUM_EXPERTS))
+        self.num_experts = num_experts   # expose for downstream code / diagnostics
+        moe_dim = self._resolve_moe_dim(
+            hparams.get('moe_dim', 'auto'), model_name, self.featurizer.n_outputs
+        )
+        self.moe_dim = moe_dim
         self.moe_head = ExplicitMoEHead(
             in_dim=self.featurizer.n_outputs,
-            expert_dim=self.EXPERT_DIM,
-            num_experts=self.NUM_EXPERTS,
+            num_experts=num_experts,
             num_classes=num_classes,
+            mlp_ratio=hparams.get('expert_mlp_ratio', self.EXPERT_MLP_RATIO),
+            moe_dim=moe_dim,
         ).cuda()
 
         if hparams.get('freeze_featurizer', False):
@@ -833,9 +867,14 @@ class GMoEVariantBase(nn.Module):
             if p.requires_grad
         ]
         trainable_count = sum(p.numel() for p in trainable_params)
-        total_count = (
-            sum(p.numel() for p in self.featurizer.parameters()) +
-            sum(p.numel() for p in self.moe_head.parameters())
+        featurizer_params = sum(p.numel() for p in self.featurizer.parameters())
+        moe_head_params = sum(p.numel() for p in self.moe_head.parameters())
+        expert_params = sum(p.numel() for p in self.moe_head.experts.parameters())
+        total_count = featurizer_params + moe_head_params
+        print(
+            f"[GMoEVariantBase] backbone_dim={self.featurizer.n_outputs} "
+            f"moe_dim={self.moe_dim} expert_dim={self.moe_head.expert_dim} "
+            f"moe_head_params={moe_head_params:,} expert_params={expert_params:,}"
         )
         print(
             f"[GMoEVariantBase] trainable params: {trainable_count:,} / "
@@ -1082,6 +1121,26 @@ class GMOE_InvMMD(GMoEVariantBase):
         self.alpha = hparams.get('alpha', 4.0)
         self.sigmas = tuple(hparams.get('mmd_sigmas', (1., 2., 4., 8., 16.)))
 
+        # Controlled-alignment ablations (default 'messi' = unchanged behavior).
+        self.alignment_mode = hparams.get('alignment_mode', 'messi')
+        if self.alignment_mode not in (
+            'messi', 'global', 'random_subset', 'domain_routing',
+        ):
+            raise ValueError(
+                f"alignment_mode must be one of "
+                f"'messi'|'global'|'random_subset'|'domain_routing', "
+                f"got {self.alignment_mode!r}"
+            )
+        self.random_subset_q = float(hparams.get('random_subset_q', 0.30))
+        self.random_subset_base_seed = int(hparams.get('random_subset_seed', 0))
+        self.register_buffer(
+            '_update_count', torch.zeros((), dtype=torch.long), persistent=True,
+        )
+        if self.alignment_mode != 'messi':
+            print(f"[GMOE_InvMMD] alignment_mode={self.alignment_mode}"
+                  + (f"  random_subset_q={self.random_subset_q}"
+                     if self.alignment_mode == 'random_subset' else ''))
+
     def update(self, minibatches, unlabeled=None):
         all_x = torch.cat([x for x, y in minibatches])
         all_y = torch.cat([y for x, y in minibatches])
@@ -1090,9 +1149,29 @@ class GMOE_InvMMD(GMoEVariantBase):
         logits, pi, h_stack = self._forward(all_x)
 
         l_cls = F.cross_entropy(logits, all_y)
-        l_inv = loss_inv_MMD(h_stack, pi, all_y, self.num_classes,
-                             dom_id, self.num_domains,
-                             alpha=self.alpha, sigmas=self.sigmas)
+        if self.alignment_mode == 'messi':
+            l_inv = loss_inv_MMD(h_stack, pi, all_y, self.num_classes,
+                                 dom_id, self.num_domains,
+                                 alpha=self.alpha, sigmas=self.sigmas)
+        elif self.alignment_mode == 'domain_routing':
+            l_inv = loss_inv_MMD_domain_routing(
+                h_stack, pi, all_y, self.num_classes,
+                dom_id, self.num_domains,
+                alpha=self.alpha, sigmas=self.sigmas,
+            )
+        else:
+            random_seed = (
+                self.random_subset_base_seed * 1_000_003
+                + int(self._update_count.item())
+            ) if self.alignment_mode == 'random_subset' else None
+            l_inv = loss_inv_MMD_ablation(
+                h_stack, all_y, self.num_classes,
+                dom_id, self.num_domains,
+                alignment_mode=self.alignment_mode,
+                sigmas=self.sigmas,
+                random_subset_q=self.random_subset_q,
+                random_seed=random_seed,
+            )
         l_sp  = loss_sparse(pi)
         l_bal = loss_balance(pi)
         l_div = loss_diversity(h_stack)
@@ -1106,6 +1185,7 @@ class GMOE_InvMMD(GMoEVariantBase):
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+        self._update_count += 1
 
         return {
             'loss':     loss.item(),
@@ -1186,6 +1266,140 @@ class GMOE_InvOT(GMoEVariantBase):
             'loss_bal': l_bal.item(),
             'loss_div': l_div.item(),
         }
+
+
+# ---------------------------------------------------------------------------
+# rMESSI_InvOT — reliability-aware entropic optimal transport
+# ---------------------------------------------------------------------------
+
+class rMESSI_InvOT(GMoEVariantBase):
+    """
+    Reliable MESSI/InvOT variant.
+
+    This class intentionally leaves GMOE_InvOT unchanged and routes only this
+    new algorithm through loss_inv_OT_reliable.
+    """
+
+    _RELIABILITY_MODES = (
+        'none', 'mask', 'coverage', 'ema_coverage',
+        'ema_coverage_conf', 'full',
+    )
+
+    def __init__(self, input_shape, num_classes, num_domains, hparams):
+        super().__init__(input_shape, num_classes, num_domains, hparams)
+        self.lambda_inv = hparams.get('lambda_inv', 0.1)
+        self.lambda_sp  = hparams.get('lambda_sp',  0.01)
+        self.lambda_bal = hparams.get('lambda_bal', 0.01)
+        self.lambda_div = hparams.get('lambda_div', 0.01)
+        self.alpha = hparams.get('alpha', 4.0)
+        self.epsilon = hparams.get('ot_epsilon', 0.1)
+        self.sinkhorn_iters = hparams.get('sinkhorn_iters', 50)
+
+        self.reliability_mode = hparams.get('reliability_mode', 'none')
+        if self.reliability_mode not in self._RELIABILITY_MODES:
+            raise ValueError(
+                "reliability_mode must be one of: "
+                + ', '.join(self._RELIABILITY_MODES)
+            )
+        if self.reliability_mode in ('ema_coverage_conf', 'full'):
+            raise NotImplementedError(
+                f"reliability_mode={self.reliability_mode!r} is reserved for "
+                "a later confidence/stability ablation"
+            )
+
+        self.r_n_min = int(hparams.get('r_n_min', 2))
+        self.r_tau = float(hparams.get('r_tau', 4.0))
+        self.r_ema_beta = float(hparams.get('r_ema_beta', 0.9))
+        self.r_emin = float(hparams.get('r_emin', 4.0))
+        self.r_detach = bool(hparams.get('r_detach', True))
+        self.reliable_log_detail = hparams.get('reliable_log_detail', 'compact')
+        if self.reliable_log_detail not in ('compact', 'full'):
+            raise ValueError("reliable_log_detail must be 'compact' or 'full'")
+
+        self.register_buffer(
+            'r_ema_evidence',
+            torch.zeros(num_domains, num_classes, dtype=torch.float32),
+            persistent=True,
+        )
+        self.register_buffer(
+            '_update_count', torch.zeros((), dtype=torch.long), persistent=True,
+        )
+
+    @torch.no_grad()
+    def _update_reliability_state(self, y, domain_ids):
+        if self.reliability_mode != 'ema_coverage':
+            return
+
+        for i in torch.unique(domain_ids).tolist():
+            mask_i = (domain_ids == i)
+            if not bool(mask_i.any()):
+                continue
+            yi = y[mask_i]
+            counts = torch.bincount(yi, minlength=self.num_classes).to(
+                device=self.r_ema_evidence.device,
+                dtype=self.r_ema_evidence.dtype,
+            )
+            self.r_ema_evidence[i] = (
+                self.r_ema_beta * self.r_ema_evidence[i] + counts
+            )
+
+    def update(self, minibatches, unlabeled=None):
+        all_x = torch.cat([x for x, y in minibatches])
+        all_y = torch.cat([y for x, y in minibatches])
+        dom_id = self._get_domain_ids(minibatches)
+
+        logits, pi, h_stack = self._forward(all_x)
+
+        l_cls = F.cross_entropy(logits, all_y)
+        l_inv, r_diag = gmoe_loss_utils.loss_inv_OT_reliable(
+            h_stack, pi, all_y, self.num_classes,
+            dom_id, self.num_domains,
+            alpha=self.alpha,
+            epsilon=self.epsilon,
+            sinkhorn_iters=self.sinkhorn_iters,
+            reliability_mode=self.reliability_mode,
+            r_n_min=self.r_n_min,
+            r_tau=self.r_tau,
+            r_emin=self.r_emin,
+            ema_evidence=self.r_ema_evidence,
+            r_detach=self.r_detach,
+            reliable_log_detail=self.reliable_log_detail,
+        )
+        l_sp  = loss_sparse(pi)
+        l_bal = loss_balance(pi)
+        l_div = loss_diversity(h_stack)
+
+        loss = (l_cls
+                + self.lambda_inv * l_inv
+                + self.lambda_sp  * l_sp
+                + self.lambda_bal * l_bal
+                + self.lambda_div * l_div)
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        self._update_reliability_state(all_y, dom_id)
+        self._update_count += 1
+
+        with torch.no_grad():
+            entropy = -(pi.clamp_min(1e-12) * pi.clamp_min(1e-12).log()).sum(dim=1).mean()
+            entropy_norm = entropy / torch.log(pi.new_tensor(float(self.num_experts)))
+            expert_load_std = pi.mean(dim=0).std(unbiased=False)
+            inv_loss_frac = (self.lambda_inv * l_inv.detach()) / loss.detach().abs().clamp_min(1e-12)
+
+        out = {
+            'loss':     loss.item(),
+            'loss_cls': l_cls.item(),
+            'loss_inv': l_inv.item(),
+            'inv_loss_frac': inv_loss_frac.item(),
+            'loss_sp':  l_sp.item(),
+            'loss_bal': l_bal.item(),
+            'loss_div': l_div.item(),
+            'routing_entropy_norm': entropy_norm.item(),
+            'expert_load_std': expert_load_std.item(),
+        }
+        out.update(r_diag)
+        return out
 
 
 # ---------------------------------------------------------------------------

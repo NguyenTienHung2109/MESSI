@@ -96,11 +96,86 @@ def download_and_extract(url, dst, remove=True):
 
 
 def download_vlcs(data_dir):
-    # Original URL: http://www.eecs.qmul.ac.uk/~dl307/project_iccv2017
-    full_path = stage_path(data_dir, "VLCS")
+    """Download VLCS via the JigenDG (CVPR'19) MediaFire mirror.
 
-    download_and_extract("https://drive.google.com/uc?id=1skwblH1_okBwxWxmRsp9_qi15hyPpxg8",
-                         os.path.join(data_dir, "VLCS.tar.gz"))
+    The original DomainBed Google Drive id `1skwblH1_okBwxWxmRsp9_qi15hyPpxg8`
+    is dead. We use the JigenDG mirror and convert its
+    `<ENV>/{train,test,crossval,full}/{0..4}/*.jpg` layout into the
+    DomainBed-expected `<env>/<class>/*.jpg` layout. We take `full + test`,
+    which is the canonical union of unique images (`full == train + crossval`).
+    """
+    import re
+    import urllib.request
+
+    full_path = stage_path(data_dir, "VLCS")
+    tar_path  = os.path.join(data_dir, "vlcs.tar.gz")
+    raw_root  = os.path.join(data_dir, "VLCS_raw")
+
+    # 1. Resolve a fresh direct-download URL — MediaFire tokens expire hourly,
+    #    so we must scrape the share page each time.
+    share_url = "https://www.mediafire.com/file/7yv132lgn1v267r/vlcs.tar.gz/file"
+    req = urllib.request.Request(share_url, headers={"User-Agent": "Mozilla/5.0"})
+    html = urllib.request.urlopen(req, timeout=60).read().decode("utf-8", "ignore")
+    m = re.search(r"https://download\d+\.mediafire\.com/\S+?/vlcs\.tar\.gz", html)
+    if not m:
+        raise RuntimeError(
+            "Could not extract direct-download URL from MediaFire share page. "
+            "Visit {} in a browser, download manually, and place the file at {}."
+            .format(share_url, tar_path))
+    direct_url = m.group(0)
+    print("[VLCS] direct download URL:", direct_url)
+
+    # 2. Download (urllib handles the binary stream; gdown chokes on non-Drive).
+    if not os.path.exists(tar_path):
+        print("[VLCS] downloading {} ...".format(tar_path))
+        with urllib.request.urlopen(direct_url, timeout=600) as r, \
+             open(tar_path, "wb") as f:
+            shutil.copyfileobj(r, f)
+    print("[VLCS] archive size: {:.1f} MB".format(os.path.getsize(tar_path) / 1e6))
+
+    # 3. Extract to staging dir.
+    if os.path.isdir(raw_root):
+        shutil.rmtree(raw_root)
+    os.makedirs(raw_root)
+    with tarfile.open(tar_path, "r:gz") as tar:
+        tar.extractall(raw_root)
+    src_root = os.path.join(raw_root, "VLCS")
+    if not os.path.isdir(src_root):
+        raise RuntimeError("Expected VLCS/ inside archive, not found at " + src_root)
+
+    # 4. Restructure JigenDG → DomainBed layout.
+    env_map = {"CALTECH": "Caltech101", "LABELME": "LabelMe",
+               "PASCAL":  "VOC2007",    "SUN":     "SUN09"}
+    class_map = {"0": "bird", "1": "car", "2": "chair",
+                 "3": "dog", "4": "person"}
+    keep_splits = ("full", "test")   # union = all unique images
+    counts = {dst: 0 for dst in env_map.values()}
+    for src_env, dst_env in env_map.items():
+        for split in keep_splits:
+            split_dir = os.path.join(src_root, src_env, split)
+            if not os.path.isdir(split_dir):
+                continue
+            for class_idx, class_name in class_map.items():
+                src_cls = os.path.join(split_dir, class_idx)
+                if not os.path.isdir(src_cls):
+                    continue
+                dst_cls = os.path.join(full_path, dst_env, class_name)
+                os.makedirs(dst_cls, exist_ok=True)
+                for fname in os.listdir(src_cls):
+                    # Prefix split to dodge same-name collisions across splits.
+                    shutil.copy2(
+                        os.path.join(src_cls, fname),
+                        os.path.join(dst_cls, "{}_{}".format(split, fname)),
+                    )
+                    counts[dst_env] += 1
+
+    # 5. Clean up + report.
+    shutil.rmtree(raw_root)
+    os.remove(tar_path)
+    print("[VLCS] done. Layout: {}".format(full_path))
+    for env, n in counts.items():
+        print("       {:<11s} {:>6d} images".format(env, n))
+    print("       TOTAL       {:>6d}  (reference: 10729)".format(sum(counts.values())))
 
 
 # MNIST #######################################################################

@@ -4,11 +4,45 @@
 #   - ExplicitMoEHead  — M expert MLPs + soft router + classifier
 #   - loss functions   — inv_A, inv_B, sparse, balance, diversity, cond_independence
 
+import math
+import os
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from domainbed import vision_transformer as vit_module
+
+
+_PRETRAINED_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    'domainbed', 'pretrained',
+)
+
+
+def resize_pos_embed_deit(pos_embed, old_grid_size, new_grid_size,
+                          num_prefix_tokens=1):
+    prefix_pos = pos_embed[:, :num_prefix_tokens, :]
+    patch_pos = pos_embed[:, num_prefix_tokens:, :]
+
+    bsz, num_patches, dim = patch_pos.shape
+    if bsz != 1:
+        raise ValueError(f"Expected batch size 1 in pos_embed, got {bsz}")
+    if num_patches != old_grid_size * old_grid_size:
+        raise ValueError(
+            f"Expected {old_grid_size * old_grid_size} patch tokens for "
+            f"old_grid_size={old_grid_size}, got {num_patches}"
+        )
+
+    patch_pos = patch_pos.reshape(1, old_grid_size, old_grid_size, dim)
+    patch_pos = patch_pos.permute(0, 3, 1, 2)
+    patch_pos = F.interpolate(
+        patch_pos, size=(new_grid_size, new_grid_size),
+        mode='bicubic', align_corners=False,
+    )
+    patch_pos = patch_pos.permute(0, 2, 3, 1)
+    patch_pos = patch_pos.reshape(1, new_grid_size * new_grid_size, dim)
+    return torch.cat([prefix_pos, patch_pos], dim=1)
 
 
 # ---------------------------------------------------------------------------
@@ -71,25 +105,64 @@ class DeiTFeaturizer(nn.Module):
             if shape_changed:
                 print(f'[DeiTFeaturizer:{model_name}] shape override '
                       f'(img_size={img_size}, patch_size={patch_size}, '
-                      f'in_chans={in_chans}) — patch_embed.proj and pos_embed '
-                      f'will be random-init; transformer blocks still load.')
-            checkpoint = torch.hub.load_state_dict_from_url(
-                ckpt_url, map_location='cpu', check_hash=True,
-            )
+                      f'in_chans={in_chans}); compatible pretrained weights '
+                      f'will be reused when possible.')
+            # Prefer a local checkpoint shipped with the repo over downloading
+            # from the URL — needed on servers without outbound HTTPS access.
+            local_ckpt = os.path.join(_PRETRAINED_DIR, os.path.basename(ckpt_url))
+            if os.path.exists(local_ckpt):
+                print(f'[DeiTFeaturizer:{model_name}] loading local checkpoint '
+                      f'{local_ckpt}')
+                checkpoint = torch.load(local_ckpt, map_location='cpu')
+            else:
+                checkpoint = torch.hub.load_state_dict_from_url(
+                    ckpt_url, map_location='cpu', check_hash=True,
+                )
             state = checkpoint.get('model', checkpoint)
             # Drop classifier head keys — not present when num_classes=0
             state = {k: v for k, v in state.items()
                      if not k.startswith('head')}
+
+            own = self.vit.state_dict()
+            if 'pos_embed' in state and state['pos_embed'].shape != own['pos_embed'].shape:
+                if img_size % patch_size != 0:
+                    raise ValueError(
+                        f"img_size={img_size} must be divisible by patch_size={patch_size}"
+                    )
+                num_prefix_tokens = self.vit.num_tokens
+                num_patch_tokens = state['pos_embed'].shape[1] - num_prefix_tokens
+                old_grid_size = int(math.sqrt(num_patch_tokens))
+                if old_grid_size * old_grid_size != num_patch_tokens:
+                    raise ValueError(
+                        f"Cannot infer square positional grid from pos_embed "
+                        f"shape {tuple(state['pos_embed'].shape)} with "
+                        f"num_prefix_tokens={num_prefix_tokens}"
+                    )
+                new_grid_size = img_size // patch_size
+                print(
+                    f'[DeiTFeaturizer:{model_name}] resolution={img_size}; '
+                    f'num_prefix_tokens={num_prefix_tokens}; interpolating '
+                    f'pos_embed {old_grid_size}x{old_grid_size} -> '
+                    f'{new_grid_size}x{new_grid_size}; old_shape='
+                    f'{list(state["pos_embed"].shape)}'
+                )
+                state['pos_embed'] = resize_pos_embed_deit(
+                    state['pos_embed'], old_grid_size, new_grid_size,
+                    num_prefix_tokens=num_prefix_tokens,
+                )
+                print(f'[DeiTFeaturizer:{model_name}] new pos_embed shape: '
+                      f'{list(state["pos_embed"].shape)}')
+
             if shape_changed:
-                # Drop shape-incompatible keys explicitly so load_state_dict
-                # doesn't error on size mismatch even with strict=False.
-                own = self.vit.state_dict()
+                # Drop remaining shape-incompatible keys explicitly so
+                # load_state_dict doesn't error on size mismatch. Resolution-only
+                # changes keep patch projection weights and resized pos_embed.
                 state = {k: v for k, v in state.items()
                          if k in own and own[k].shape == v.shape}
             missing, _ = self.vit.load_state_dict(state, strict=False)
             if missing:
                 print(f'[DeiTFeaturizer:{model_name}] missing keys '
-                      f'(expected if head removed): {missing}')
+                      f'(expected if head removed or shape changed): {missing}')
 
     def forward(self, x):
         # forward_features returns (cls, dist) tuple for distilled DeiT
@@ -106,50 +179,50 @@ class DeiTFeaturizer(nn.Module):
 class ExplicitMoEHead(nn.Module):
     """
     Implements:
-        h_m = E_m(z)          M expert MLPs  (z → r-dim)
-        pi(x) = softmax(G(z)) soft routing weights
+        h_m = E_m(z_moe)      M expert MLPs
+        pi(x) = softmax(G(z_moe)) soft routing weights
         h(x)  = sum_m pi_m * h_m
         y_hat = C(h(x))       linear classifier
 
-    Returns per-expert outputs h_m and routing weights pi so that the
-    variant-specific loss functions can operate on them.
+    Optional input projection maps backbone features into a compact MoE space
+    before routing, expert computation, and classification.
     """
-    def __init__(self, in_dim, expert_dim, num_experts, num_classes):
+    def __init__(self, in_dim, num_experts, num_classes, mlp_ratio=4,
+                 moe_dim=None):
         super().__init__()
         self.num_experts = num_experts
-        self.expert_dim  = expert_dim
+        self.in_dim      = in_dim
+        if moe_dim is None or (isinstance(moe_dim, str) and moe_dim.lower() in ('auto', 'none')):
+            moe_dim = in_dim
+        elif int(moe_dim) == 0:
+            moe_dim = in_dim
+        self.expert_dim  = int(moe_dim)
+        self.mlp_ratio   = mlp_ratio
+        hidden_dim       = int(round(mlp_ratio * self.expert_dim))
 
-        # M expert MLPs: each z → r
+        if self.expert_dim == in_dim:
+            self.input_proj = nn.Identity()
+        else:
+            self.input_proj = nn.Linear(in_dim, self.expert_dim)
+
         self.experts = nn.ModuleList([
             nn.Sequential(
-                nn.Linear(in_dim, expert_dim),
+                nn.Linear(self.expert_dim, hidden_dim),
                 nn.GELU(),
-                nn.Linear(expert_dim, expert_dim),
+                nn.Linear(hidden_dim, self.expert_dim),
             )
             for _ in range(num_experts)
         ])
 
-        # Soft routing network: z → (M,)
-        self.router = nn.Linear(in_dim, num_experts, bias=True)
-
-        # Final classifier: r → num_classes
-        self.classifier = nn.Linear(expert_dim, num_classes)
+        self.router = nn.Linear(self.expert_dim, num_experts, bias=True)
+        self.classifier = nn.Linear(self.expert_dim, num_classes)
 
     def forward(self, z):
-        """
-        Args:
-            z: (B, in_dim)
-        Returns:
-            logits:  (B, num_classes)
-            pi:      (B, M)     routing weights
-            h_stack: (B, M, r)  per-expert representations
-        """
-        h_list  = [E(z) for E in self.experts]     # M × (B, r)
-        h_stack = torch.stack(h_list, dim=1)        # (B, M, r)
-
-        pi = F.softmax(self.router(z), dim=-1)      # (B, M)
-        h  = (pi.unsqueeze(-1) * h_stack).sum(dim=1)  # (B, r)
-
+        z_moe = self.input_proj(z)
+        h_list  = [E(z_moe) for E in self.experts]
+        h_stack = torch.stack(h_list, dim=1)
+        pi = F.softmax(self.router(z_moe), dim=-1)
+        h  = (pi.unsqueeze(-1) * h_stack).sum(dim=1)
         logits = self.classifier(h)
         return logits, pi, h_stack
 

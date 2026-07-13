@@ -245,50 +245,54 @@ class SweepLogger:
     def append_eval_log(self, step, results):
         """
         Append one record to eval_log.jsonl.
-        `results` is the dict already built by train.py (has env*_out_acc keys).
+        Results dict from train.py may contain
+        env*_out_acc, env*_out_f1, or env*_out_recall keys.
         """
         elapsed = round(time.time() - self.start_t, 1)
+        metric = results.get("eval_metric", "acc")
+        metric_re = re.escape(metric)
 
-        out_acc = {
+        out_metric = {
             k: round(v, 4)
             for k, v in results.items()
-            if re.match(r"env\d+_out_acc", k)
+            if re.match(rf"env\d+_out_{metric_re}$", k)
         }
-        in_acc = {
+        in_metric = {
             k: round(v, 4)
             for k, v in results.items()
-            if re.match(r"env\d+_in_acc", k)
+            if re.match(rf"env\d+_in_{metric_re}$", k)
         }
 
-        vals = list(out_acc.values())
-        avg  = round(sum(vals) / len(vals), 4) if vals else None
+        vals = list(out_metric.values())
+        avg = round(sum(vals) / len(vals), 4) if vals else None
         worst = round(min(vals), 4) if vals else None
-        best  = round(max(vals), 4) if vals else None
-        std   = round(
+        best = round(max(vals), 4) if vals else None
+        std = round(
             (sum((v - avg) ** 2 for v in vals) / len(vals)) ** 0.5, 4
         ) if vals and len(vals) > 1 else 0.0
 
         is_best = avg is not None and avg > self._best_val_acc
         if is_best:
-            self._best_val_acc  = avg
+            self._best_val_acc = avg
             self._best_val_step = step
 
         mem_gb = results.get("mem_gb", 0.0)
         self._peak_mem_gb = max(self._peak_mem_gb, mem_gb or 0.0)
 
         record = {
-            "step":                  step,
-            "elapsed_sec":           elapsed,
-            "val_acc_per_domain":    out_acc,
-            "val_in_acc_per_domain": in_acc,
-            "val_avg_acc":           avg,
-            "val_worst_domain_acc":  worst,
-            "val_best_domain_acc":   best,
-            "val_std_acc":           std,
-            "mem_gb":                round(mem_gb, 3),
-            "is_best_val":           is_best,
-            "best_val_acc_so_far":   self._best_val_acc,
-            "best_step_so_far":      self._best_val_step,
+            "step": step,
+            "elapsed_sec": elapsed,
+            "eval_metric": metric,
+            f"val_{metric}_per_domain": out_metric,
+            f"val_in_{metric}_per_domain": in_metric,
+            f"val_avg_{metric}": avg,
+            f"val_worst_domain_{metric}": worst,
+            f"val_best_domain_{metric}": best,
+            f"val_std_{metric}": std,
+            "mem_gb": round(mem_gb, 3),
+            "is_best_val": is_best,
+            f"best_val_{metric}_so_far": self._best_val_acc,
+            "best_step_so_far": self._best_val_step,
         }
         _append_jsonl(self.eval_log_path, record)
 
@@ -330,28 +334,26 @@ class SweepLogger:
     def write_final_summary(self):
         """Write final_summary.json at run end."""
         elapsed = round(time.time() - self.start_t, 1)
+        metric = self.hparams.get("eval_metric", "acc")
+        metric_key = f"val_avg_{metric}"
 
-        # stability: std of val_avg_acc over last 10% of logged eval records
-        eval_accs = []
+        eval_vals = []
         if os.path.exists(self.eval_log_path):
             with open(self.eval_log_path) as f:
                 eval_records = [json.loads(l) for l in f if l.strip()]
             n_tail = max(1, len(eval_records) // 10)
             tail = eval_records[-n_tail:]
-            eval_accs = [r["val_avg_acc"] for r in tail if r.get("val_avg_acc") is not None]
+            eval_vals = [r[metric_key] for r in tail if r.get(metric_key) is not None]
 
         val_std_tail = 0.0
         val_mean_tail = None
-        if eval_accs:
-            val_mean_tail = round(sum(eval_accs) / len(eval_accs), 4)
-            val_std_tail  = round(
-                (sum((v - val_mean_tail) ** 2 for v in eval_accs) / len(eval_accs)) ** 0.5, 4
+        if eval_vals:
+            val_mean_tail = round(sum(eval_vals) / len(eval_vals), 4)
+            val_std_tail = round(
+                (sum((v - val_mean_tail) ** 2 for v in eval_vals) / len(eval_vals)) ** 0.5, 4
             )
 
-        # last eval record for "final" metrics
-        final_val_avg = None
-        if eval_accs:
-            final_val_avg = eval_accs[-1]
+        final_val_avg = eval_vals[-1] if eval_vals else None
 
         total_params = self.total_params
         active_params = self.active_params
@@ -360,33 +362,34 @@ class SweepLogger:
         doc = {
             "run_id": self.run_id,
             "status": "completed",
+            "eval_metric": metric,
             "best_checkpoint": {
-                "step":         self._best_val_step,
-                "val_avg_acc":  self._best_val_acc if self._best_val_acc > -1 else None,
+                "step": self._best_val_step,
+                metric_key: self._best_val_acc if self._best_val_acc > -1 else None,
             },
             "final_checkpoint": {
-                "step":         self._train_records[-1]["step"] if self._train_records else None,
-                "val_avg_acc":  final_val_avg,
+                "step": self._train_records[-1]["step"] if self._train_records else None,
+                metric_key: final_val_avg,
             },
             "peak_metrics": {
-                "peak_val_avg_acc":  self._best_val_acc if self._best_val_acc > -1 else None,
-                "peak_val_step":     self._best_val_step,
+                f"peak_{metric_key}": self._best_val_acc if self._best_val_acc > -1 else None,
+                "peak_val_step": self._best_val_step,
             },
             "stability_metrics": {
-                "val_acc_std_last_10pct_steps":  val_std_tail,
-                "val_acc_mean_last_10pct_steps": val_mean_tail,
-                "training_converged":            val_std_tail < 0.01 if eval_accs else None,
-                "collapse_detected":             False,
-                "collapse_step":                 None,
+                f"val_{metric}_std_last_10pct_steps": val_std_tail,
+                f"val_{metric}_mean_last_10pct_steps": val_mean_tail,
+                "training_converged": val_std_tail < 0.01 if eval_vals else None,
+                "collapse_detected": False,
+                "collapse_step": None,
             },
             "efficiency_metrics": {
-                "total_train_time_sec":    elapsed,
-                "avg_sec_per_step":        round(elapsed / max(1, len(self._train_records)), 4),
-                "total_params":            total_params,
-                "active_params":           active_params,
-                "hidden_size_per_expert":  self.hidden_size,
+                "total_train_time_sec": elapsed,
+                "avg_sec_per_step": round(elapsed / max(1, len(self._train_records)), 4),
+                "total_params": total_params,
+                "active_params": active_params,
+                "hidden_size_per_expert": self.hidden_size,
                 "params_utilization_ratio": util_ratio,
-                "peak_mem_gb":             round(self._peak_mem_gb, 3),
+                "peak_mem_gb": round(self._peak_mem_gb, 3),
             },
             "hparams": dict(self.hparams),
         }

@@ -10,9 +10,9 @@ set -u
 PARALLEL=${1:-4}
 ALGO=GMOE_InvMMD
 DATASET=TerraIncognita
-STEPS=5000
+STEPS=10000
 CHECKPOINT_FREQ=500
-HPARAMS='{"model":"deit_tiny_patch16_224","lambda_inv":0.01,"lambda_sp":0,"lambda_bal":0,"lambda_div":0.02,"alpha":4.0}'
+HPARAMS='{"model":"deit_small_patch16_224","lambda_inv":0.01,"lambda_sp":0.02,"lambda_bal":0.02,"lambda_div":0.02,"alpha":4.0}'
 
 LOG_DIR=multi_dataset/logs
 mkdir -p "$LOG_DIR"
@@ -21,7 +21,7 @@ run_one() {
     local env=$1
     local seed=$2
 
-    local out_dir="multi_dataset/test_${ALGO#GMOE_}/${DATASET}_env${env}_seed${seed}"
+    local out_dir="multi_dataset/test_${ALGO#GMOE_}_small/${DATASET}_env${env}_seed${seed}"
     local log_file="$LOG_DIR/${ALGO}_${DATASET}_env${env}_seed${seed}.log"
 
     if [ -f "$out_dir/done" ]; then
@@ -65,3 +65,4 @@ echo ""
 echo "=== Summary ==="
 done_count=$(find multi_dataset/test_${ALGO#GMOE_} -name "done" -path "*${DATASET}_*" 2>/dev/null | wc -l)
 echo "Completed: $done_count / 12"
+    

@@ -34,6 +34,8 @@ def _hparams(algorithm, dataset, random_seed):
     # Backbone selector — 'resnet50' (default) or a ViT factory name like
     # 'deit_small_patch16_224'. Read by networks.Featurizer().
     _hparam('model', 'resnet50', lambda r: 'resnet50')
+    _hparam('image_size', 224, lambda r: 224)
+    _hparam('resolution', None, lambda r: None)
     _hparam('class_balanced', False, lambda r: False)
     # TODO: nonlinear classifiers disabled
     _hparam('nonlinear_classifier', False,
@@ -232,6 +234,41 @@ def _hparams(algorithm, dataset, random_seed):
         _hparam('variance_loss_weight', 0.0, lambda r: r.choice([0., 1e-4, 1e-3]))
         _hparam('moe_top_k',            1,   lambda r: r.choice([1, 2]))
         _hparam('num_experts',          6,   lambda r: r.choice([6, 8, 12, 16]))
+
+
+    if algorithm == 'GMOE_InvOT':
+        _hparam('model',              'deit_small_patch16_224', lambda r: 'deit_small_patch16_224')
+        _hparam('moe_dim',            'auto',                   lambda r: 'auto')
+        _hparam('num_experts',        6,                        lambda r: 6)
+        _hparam('lambda_inv',         0.1,                      lambda r: 0.1)
+        _hparam('lambda_sp',          0.01,                     lambda r: 0.01)
+        _hparam('lambda_bal',         0.01,                     lambda r: 0.01)
+        _hparam('lambda_div',         0.01,                     lambda r: 0.01)
+        _hparam('alpha',              4.0,                      lambda r: 4.0)
+        _hparam('ot_epsilon',         0.1,                      lambda r: 0.1)
+        _hparam('sinkhorn_iters',     50,                       lambda r: 50)
+
+    if algorithm == 'rMESSI_InvOT':
+        _hparam('model',              'deit_small_patch16_224', lambda r: 'deit_small_patch16_224')
+        _hparam('moe_dim',            'auto',                   lambda r: 'auto')
+        _hparam('num_experts',        6,                        lambda r: 6)
+        _hparam('lambda_inv',         0.1,                      lambda r: 0.1)
+        _hparam('lambda_sp',          0.01,                     lambda r: 0.01)
+        _hparam('lambda_bal',         0.01,                     lambda r: 0.01)
+        _hparam('lambda_div',         0.01,                     lambda r: 0.01)
+        _hparam('alpha',              4.0,                      lambda r: 4.0)
+        _hparam('ot_epsilon',         0.1,                      lambda r: 0.1)
+        _hparam('sinkhorn_iters',     50,                       lambda r: 50)
+        _hparam('reliability_mode',   'none',                   lambda r: 'none')
+        _hparam('r_n_min',            2,                        lambda r: int(r.choice([1, 2, 3])))
+        _hparam('r_tau',              4.0,                      lambda r: float(r.choice([2.0, 4.0, 8.0])))
+        _hparam('r_ema_beta',         0.9,                      lambda r: float(r.choice([0.8, 0.9, 0.95])))
+        _hparam('r_emin',             4.0,                      lambda r: float(r.choice([2.0, 4.0, 8.0])))
+        _hparam('r_detach',           True,                     lambda r: True)
+        _hparam('reliable_log_detail', 'compact',                lambda r: 'compact')
+        _hparam('r_conf_floor',       0.2,                      lambda r: 0.2)
+        _hparam('r_conf_warmup_steps', 5000,                    lambda r: 5000)
+        _hparam('r_stab_sigma',       0.1,                      lambda r: 0.1)
 
     return hparams
 

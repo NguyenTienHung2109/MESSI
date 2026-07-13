@@ -265,6 +265,49 @@ def accuracy(network, loader, weights, device):
     return correct / total
 
 
+def accuracy_metrics(network, loader, weights, device):
+    """Compute accuracy + macro-F1 + macro-recall in a single eval pass.
+
+    Macro averaging weights every class equally — matches WILDS leaderboard
+    convention for long-tail classification (e.g. iWildCam, 182 species
+    where one class accounts for 34% of samples).
+    """
+    from sklearn.metrics import f1_score, recall_score
+
+    network.eval()
+    y_true_chunks, y_pred_chunks, w_chunks = [], [], []
+    weights_offset = 0
+    with torch.no_grad():
+        for x, y in loader:
+            x = x.to(device)
+            y = y.to(device)
+            p = network.predict(x)
+            if weights is None:
+                bw = torch.ones(len(x), device=device)
+            else:
+                bw = weights[weights_offset:weights_offset + len(x)].to(device)
+                weights_offset += len(x)
+            if p.size(1) == 1:
+                pred = p.gt(0).long().squeeze(-1)
+            else:
+                pred = p.argmax(1)
+            y_true_chunks.append(y.cpu().numpy())
+            y_pred_chunks.append(pred.cpu().numpy())
+            w_chunks.append(bw.cpu().numpy())
+    network.train()
+
+    y_true = np.concatenate(y_true_chunks)
+    y_pred = np.concatenate(y_pred_chunks)
+    sw = np.concatenate(w_chunks)
+
+    acc = float((y_true == y_pred).astype(float).dot(sw) / sw.sum())
+    f1 = float(f1_score(y_true, y_pred, average='macro',
+                        sample_weight=sw, zero_division=0))
+    rec = float(recall_score(y_true, y_pred, average='macro',
+                             sample_weight=sw, zero_division=0))
+    return {'acc': acc, 'f1': f1, 'recall': rec}
+
+
 class Tee:
     def __init__(self, fname, mode="a"):
         self.stdout = sys.stdout

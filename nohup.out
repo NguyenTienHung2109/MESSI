@@ -1,0 +1,239 @@
+/home/hungnt/anaconda3/envs/gmoe/lib/python3.9/site-packages/timm/models/features.py:4: FutureWarning: Importing from timm.models.features is deprecated, please import via timm.models
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.models", FutureWarning)
+/home/hungnt/anaconda3/envs/gmoe/lib/python3.9/site-packages/timm/models/fx_features.py:4: FutureWarning: Importing from timm.models.fx_features is deprecated, please import via timm.models
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.models", FutureWarning)
+/home/hungnt/anaconda3/envs/gmoe/lib/python3.9/site-packages/timm/models/hub.py:4: FutureWarning: Importing from timm.models.hub is deprecated, please import via timm.models
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.models", FutureWarning)
+/home/hungnt/anaconda3/envs/gmoe/lib/python3.9/site-packages/timm/models/layers/__init__.py:49: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+/home/hungnt/anaconda3/envs/gmoe/lib/python3.9/site-packages/timm/models/registry.py:4: FutureWarning: Importing from timm.models.registry is deprecated, please import via timm.models
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.models", FutureWarning)
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:793: UserWarning: Overwriting vit_tiny_patch16_224 in registry with vision_transformer.vit_tiny_patch16_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_tiny_patch16_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:802: UserWarning: Overwriting vit_tiny_patch16_384 in registry with vision_transformer.vit_tiny_patch16_384. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_tiny_patch16_384(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:811: UserWarning: Overwriting vit_small_patch32_224 in registry with vision_transformer.vit_small_patch32_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_small_patch32_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:820: UserWarning: Overwriting vit_small_patch32_384 in registry with vision_transformer.vit_small_patch32_384. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_small_patch32_384(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:829: UserWarning: Overwriting vit_small_patch16_224 in registry with vision_transformer.vit_small_patch16_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_small_patch16_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:839: UserWarning: Overwriting vit_small_patch16_384 in registry with vision_transformer.vit_small_patch16_384. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_small_patch16_384(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:849: UserWarning: Overwriting vit_base_patch32_224 in registry with vision_transformer.vit_base_patch32_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_base_patch32_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:859: UserWarning: Overwriting vit_base_patch32_384 in registry with vision_transformer.vit_base_patch32_384. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_base_patch32_384(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:869: UserWarning: Overwriting vit_base_patch16_224 in registry with vision_transformer.vit_base_patch16_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_base_patch16_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:879: UserWarning: Overwriting vit_base_patch16_384 in registry with vision_transformer.vit_base_patch16_384. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_base_patch16_384(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:889: UserWarning: Overwriting vit_base_patch8_224 in registry with vision_transformer.vit_base_patch8_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_base_patch8_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:899: UserWarning: Overwriting vit_large_patch32_224 in registry with vision_transformer.vit_large_patch32_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_large_patch32_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:908: UserWarning: Overwriting vit_large_patch32_384 in registry with vision_transformer.vit_large_patch32_384. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_large_patch32_384(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:918: UserWarning: Overwriting vit_large_patch16_224 in registry with vision_transformer.vit_large_patch16_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_large_patch16_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:928: UserWarning: Overwriting vit_large_patch16_384 in registry with vision_transformer.vit_large_patch16_384. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_large_patch16_384(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:958: UserWarning: Overwriting vit_huge_patch14_224 in registry with vision_transformer.vit_huge_patch14_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_huge_patch14_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:967: UserWarning: Overwriting vit_giant_patch14_224 in registry with vision_transformer.vit_giant_patch14_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_giant_patch14_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:976: UserWarning: Overwriting vit_gigantic_patch14_224 in registry with vision_transformer.vit_gigantic_patch14_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_gigantic_patch14_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:985: UserWarning: Overwriting vit_tiny_patch16_224_in21k in registry with vision_transformer.vit_tiny_patch16_224_in21k. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_tiny_patch16_224_in21k(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:996: UserWarning: Overwriting vit_small_patch32_224_in21k in registry with vision_transformer.vit_small_patch32_224_in21k. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_small_patch32_224_in21k(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1007: UserWarning: Overwriting vit_small_patch16_224_in21k in registry with vision_transformer.vit_small_patch16_224_in21k. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_small_patch16_224_in21k(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1018: UserWarning: Overwriting vit_base_patch32_224_in21k in registry with vision_transformer.vit_base_patch32_224_in21k. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_base_patch32_224_in21k(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1030: UserWarning: Overwriting vit_base_patch16_224_in21k in registry with vision_transformer.vit_base_patch16_224_in21k. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_base_patch16_224_in21k(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1042: UserWarning: Overwriting vit_base_patch8_224_in21k in registry with vision_transformer.vit_base_patch8_224_in21k. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_base_patch8_224_in21k(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1054: UserWarning: Overwriting vit_large_patch32_224_in21k in registry with vision_transformer.vit_large_patch32_224_in21k. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_large_patch32_224_in21k(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1066: UserWarning: Overwriting vit_large_patch16_224_in21k in registry with vision_transformer.vit_large_patch16_224_in21k. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_large_patch16_224_in21k(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1078: UserWarning: Overwriting vit_huge_patch14_224_in21k in registry with vision_transformer.vit_huge_patch14_224_in21k. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_huge_patch14_224_in21k(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1090: UserWarning: Overwriting deit_tiny_patch16_224 in registry with vision_transformer.deit_tiny_patch16_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def deit_tiny_patch16_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1100: UserWarning: Overwriting deit_small_patch16_224 in registry with vision_transformer.deit_small_patch16_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def deit_small_patch16_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1110: UserWarning: Overwriting deit_base_patch16_224 in registry with vision_transformer.deit_base_patch16_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def deit_base_patch16_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1120: UserWarning: Overwriting deit_base_patch16_384 in registry with vision_transformer.deit_base_patch16_384. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def deit_base_patch16_384(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1130: UserWarning: Overwriting deit_tiny_distilled_patch16_224 in registry with vision_transformer.deit_tiny_distilled_patch16_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def deit_tiny_distilled_patch16_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1141: UserWarning: Overwriting deit_small_distilled_patch16_224 in registry with vision_transformer.deit_small_distilled_patch16_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def deit_small_distilled_patch16_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1152: UserWarning: Overwriting deit_base_distilled_patch16_224 in registry with vision_transformer.deit_base_distilled_patch16_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def deit_base_distilled_patch16_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1163: UserWarning: Overwriting deit_base_distilled_patch16_384 in registry with vision_transformer.deit_base_distilled_patch16_384. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def deit_base_distilled_patch16_384(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1174: UserWarning: Overwriting vit_base_patch16_224_miil_in21k in registry with vision_transformer.vit_base_patch16_224_miil_in21k. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_base_patch16_224_miil_in21k(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1184: UserWarning: Overwriting vit_base_patch16_224_miil in registry with vision_transformer.vit_base_patch16_224_miil. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_base_patch16_224_miil(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:793: UserWarning: Overwriting vit_tiny_patch16_224 in registry with domainbed.vision_transformer.vit_tiny_patch16_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_tiny_patch16_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:802: UserWarning: Overwriting vit_tiny_patch16_384 in registry with domainbed.vision_transformer.vit_tiny_patch16_384. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_tiny_patch16_384(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:811: UserWarning: Overwriting vit_small_patch32_224 in registry with domainbed.vision_transformer.vit_small_patch32_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_small_patch32_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:820: UserWarning: Overwriting vit_small_patch32_384 in registry with domainbed.vision_transformer.vit_small_patch32_384. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_small_patch32_384(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:829: UserWarning: Overwriting vit_small_patch16_224 in registry with domainbed.vision_transformer.vit_small_patch16_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_small_patch16_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:839: UserWarning: Overwriting vit_small_patch16_384 in registry with domainbed.vision_transformer.vit_small_patch16_384. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_small_patch16_384(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:849: UserWarning: Overwriting vit_base_patch32_224 in registry with domainbed.vision_transformer.vit_base_patch32_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_base_patch32_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:859: UserWarning: Overwriting vit_base_patch32_384 in registry with domainbed.vision_transformer.vit_base_patch32_384. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_base_patch32_384(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:869: UserWarning: Overwriting vit_base_patch16_224 in registry with domainbed.vision_transformer.vit_base_patch16_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_base_patch16_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:879: UserWarning: Overwriting vit_base_patch16_384 in registry with domainbed.vision_transformer.vit_base_patch16_384. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_base_patch16_384(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:889: UserWarning: Overwriting vit_base_patch8_224 in registry with domainbed.vision_transformer.vit_base_patch8_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_base_patch8_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:899: UserWarning: Overwriting vit_large_patch32_224 in registry with domainbed.vision_transformer.vit_large_patch32_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_large_patch32_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:908: UserWarning: Overwriting vit_large_patch32_384 in registry with domainbed.vision_transformer.vit_large_patch32_384. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_large_patch32_384(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:918: UserWarning: Overwriting vit_large_patch16_224 in registry with domainbed.vision_transformer.vit_large_patch16_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_large_patch16_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:928: UserWarning: Overwriting vit_large_patch16_384 in registry with domainbed.vision_transformer.vit_large_patch16_384. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_large_patch16_384(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:938: UserWarning: Overwriting vit_base_patch16_sam_224 in registry with domainbed.vision_transformer.vit_base_patch16_sam_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_base_patch16_sam_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:948: UserWarning: Overwriting vit_base_patch32_sam_224 in registry with domainbed.vision_transformer.vit_base_patch32_sam_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_base_patch32_sam_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:958: UserWarning: Overwriting vit_huge_patch14_224 in registry with domainbed.vision_transformer.vit_huge_patch14_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_huge_patch14_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:967: UserWarning: Overwriting vit_giant_patch14_224 in registry with domainbed.vision_transformer.vit_giant_patch14_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_giant_patch14_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:976: UserWarning: Overwriting vit_gigantic_patch14_224 in registry with domainbed.vision_transformer.vit_gigantic_patch14_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_gigantic_patch14_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:985: UserWarning: Overwriting vit_tiny_patch16_224_in21k in registry with domainbed.vision_transformer.vit_tiny_patch16_224_in21k. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_tiny_patch16_224_in21k(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:996: UserWarning: Overwriting vit_small_patch32_224_in21k in registry with domainbed.vision_transformer.vit_small_patch32_224_in21k. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_small_patch32_224_in21k(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1007: UserWarning: Overwriting vit_small_patch16_224_in21k in registry with domainbed.vision_transformer.vit_small_patch16_224_in21k. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_small_patch16_224_in21k(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1018: UserWarning: Overwriting vit_base_patch32_224_in21k in registry with domainbed.vision_transformer.vit_base_patch32_224_in21k. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_base_patch32_224_in21k(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1030: UserWarning: Overwriting vit_base_patch16_224_in21k in registry with domainbed.vision_transformer.vit_base_patch16_224_in21k. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_base_patch16_224_in21k(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1042: UserWarning: Overwriting vit_base_patch8_224_in21k in registry with domainbed.vision_transformer.vit_base_patch8_224_in21k. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_base_patch8_224_in21k(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1054: UserWarning: Overwriting vit_large_patch32_224_in21k in registry with domainbed.vision_transformer.vit_large_patch32_224_in21k. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_large_patch32_224_in21k(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1066: UserWarning: Overwriting vit_large_patch16_224_in21k in registry with domainbed.vision_transformer.vit_large_patch16_224_in21k. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_large_patch16_224_in21k(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1078: UserWarning: Overwriting vit_huge_patch14_224_in21k in registry with domainbed.vision_transformer.vit_huge_patch14_224_in21k. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_huge_patch14_224_in21k(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1090: UserWarning: Overwriting deit_tiny_patch16_224 in registry with domainbed.vision_transformer.deit_tiny_patch16_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def deit_tiny_patch16_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1100: UserWarning: Overwriting deit_small_patch16_224 in registry with domainbed.vision_transformer.deit_small_patch16_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def deit_small_patch16_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1110: UserWarning: Overwriting deit_base_patch16_224 in registry with domainbed.vision_transformer.deit_base_patch16_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def deit_base_patch16_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1120: UserWarning: Overwriting deit_base_patch16_384 in registry with domainbed.vision_transformer.deit_base_patch16_384. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def deit_base_patch16_384(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1130: UserWarning: Overwriting deit_tiny_distilled_patch16_224 in registry with domainbed.vision_transformer.deit_tiny_distilled_patch16_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def deit_tiny_distilled_patch16_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1141: UserWarning: Overwriting deit_small_distilled_patch16_224 in registry with domainbed.vision_transformer.deit_small_distilled_patch16_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def deit_small_distilled_patch16_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1152: UserWarning: Overwriting deit_base_distilled_patch16_224 in registry with domainbed.vision_transformer.deit_base_distilled_patch16_224. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def deit_base_distilled_patch16_224(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1163: UserWarning: Overwriting deit_base_distilled_patch16_384 in registry with domainbed.vision_transformer.deit_base_distilled_patch16_384. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def deit_base_distilled_patch16_384(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1174: UserWarning: Overwriting vit_base_patch16_224_miil_in21k in registry with domainbed.vision_transformer.vit_base_patch16_224_miil_in21k. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_base_patch16_224_miil_in21k(pretrained=False, **kwargs):
+/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py:1184: UserWarning: Overwriting vit_base_patch16_224_miil in registry with domainbed.vision_transformer.vit_base_patch16_224_miil. This is because the name being registered conflicts with an existing name. Please check if this is not expected.
+  def vit_base_patch16_224_miil(pretrained=False, **kwargs):
+/home/hungnt/anaconda3/envs/gmoe/lib/python3.9/site-packages/outdated/__init__.py:36: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import parse_version
+Environment:
+	Python: 3.9.25
+	PyTorch: 2.8.0+cu128
+	Torchvision: 0.23.0+cu128
+	CUDA: 12.8
+	CUDNN: 91002
+	NumPy: 2.0.2
+	PIL: 9.0.1
+Args:
+	algorithm: GMoEOMoE
+	batch_size: None
+	checkpoint_freq: 500
+	data_dir: ./domainbed/data
+	dataset: WILDSIWildCam
+	drop_out: None
+	eval_batch_size: 64
+	eval_num_workers: None
+	holdout_fraction: 0.2
+	hparams: {"data_augmentation":true,"batch_size":32,"model":"deit_small_patch16_224","use_omoe":true,"use_balance_loss":true,"num_experts":6,"gate_k":2,"expert_depth":2}
+	hparams_seed: 0
+	lr: None
+	max_samples_per_env: None
+	num_workers: None
+	output_dir: multi_dataset/iwildcam_GMoEOMoE/seed1
+	save_model_every_checkpoint: False
+	seed: 0
+	skip_model_save: False
+	source_envs: None
+	steps: 5000
+	stratified_subsample: True
+	sweep_log_dir: None
+	sweep_run_id: None
+	task: domain_generalization
+	test_envs: [1, 2, 3, 4]
+	trial_seed: 0
+	uda_holdout_fraction: 0
+	weight_decay: None
+Loader config:
+	train_num_workers: 4
+	eval_num_workers: 4
+	eval_batch_size: 64
+wandb: WARNING `start_method` is deprecated and will be removed in a future version of wandb. This setting is currently non-functional and safely ignored.
+_IncompatibleKeys(missing_keys=['blocks.8.mlp.experts.0.layers.0.weight', 'blocks.8.mlp.experts.0.layers.0.bias', 'blocks.8.mlp.experts.0.layers.1.weight', 'blocks.8.mlp.experts.0.layers.1.bias', 'blocks.8.mlp.experts.1.layers.0.weight', 'blocks.8.mlp.experts.1.layers.0.bias', 'blocks.8.mlp.experts.1.layers.1.weight', 'blocks.8.mlp.experts.1.layers.1.bias', 'blocks.8.mlp.experts.2.layers.0.weight', 'blocks.8.mlp.experts.2.layers.0.bias', 'blocks.8.mlp.experts.2.layers.1.weight', 'blocks.8.mlp.experts.2.layers.1.bias', 'blocks.8.mlp.experts.3.layers.0.weight', 'blocks.8.mlp.experts.3.layers.0.bias', 'blocks.8.mlp.experts.3.layers.1.weight', 'blocks.8.mlp.experts.3.layers.1.bias', 'blocks.8.mlp.experts.4.layers.0.weight', 'blocks.8.mlp.experts.4.layers.0.bias', 'blocks.8.mlp.experts.4.layers.1.weight', 'blocks.8.mlp.experts.4.layers.1.bias', 'blocks.8.mlp.experts.5.layers.0.weight', 'blocks.8.mlp.experts.5.layers.0.bias', 'blocks.8.mlp.experts.5.layers.1.weight', 'blocks.8.mlp.experts.5.layers.1.bias', 'blocks.8.mlp.gate_proj.weight', 'blocks.10.mlp.experts.0.layers.0.weight', 'blocks.10.mlp.experts.0.layers.0.bias', 'blocks.10.mlp.experts.0.layers.1.weight', 'blocks.10.mlp.experts.0.layers.1.bias', 'blocks.10.mlp.experts.1.layers.0.weight', 'blocks.10.mlp.experts.1.layers.0.bias', 'blocks.10.mlp.experts.1.layers.1.weight', 'blocks.10.mlp.experts.1.layers.1.bias', 'blocks.10.mlp.experts.2.layers.0.weight', 'blocks.10.mlp.experts.2.layers.0.bias', 'blocks.10.mlp.experts.2.layers.1.weight', 'blocks.10.mlp.experts.2.layers.1.bias', 'blocks.10.mlp.experts.3.layers.0.weight', 'blocks.10.mlp.experts.3.layers.0.bias', 'blocks.10.mlp.experts.3.layers.1.weight', 'blocks.10.mlp.experts.3.layers.1.bias', 'blocks.10.mlp.experts.4.layers.0.weight', 'blocks.10.mlp.experts.4.layers.0.bias', 'blocks.10.mlp.experts.4.layers.1.weight', 'blocks.10.mlp.experts.4.layers.1.bias', 'blocks.10.mlp.experts.5.layers.0.weight', 'blocks.10.mlp.experts.5.layers.0.bias', 'blocks.10.mlp.experts.5.layers.1.weight', 'blocks.10.mlp.experts.5.layers.1.bias', 'blocks.10.mlp.gate_proj.weight', 'head.weight', 'head.bias'], unexpected_keys=[])
+Traceback (most recent call last):
+  File "/home/hungnt/anaconda3/envs/gmoe/lib/python3.9/runpy.py", line 197, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/home/hungnt/anaconda3/envs/gmoe/lib/python3.9/runpy.py", line 87, in _run_code
+    exec(code, run_globals)
+  File "/home/hungnt/hungnt/DG-OMOE/domainbed/scripts/train.py", line 420, in <module>
+    m = misc.accuracy_metrics(algorithm, loader, weights, device)
+  File "/home/hungnt/hungnt/DG-OMOE/domainbed/lib/misc.py", line 284, in accuracy_metrics
+    p = network.predict(x)
+  File "/home/hungnt/hungnt/DG-OMOE/domainbed/algorithms.py", line 377, in predict
+    prediction = self.model(x)
+  File "/home/hungnt/anaconda3/envs/gmoe/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/hungnt/anaconda3/envs/gmoe/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py", line 580, in forward
+    x = self.forward_features(x, domain_index)
+  File "/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py", line 572, in forward_features
+    x = blk(x, domain_index)
+  File "/home/hungnt/anaconda3/envs/gmoe/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/hungnt/anaconda3/envs/gmoe/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py", line 421, in forward
+    x = x + self.drop_path(self.mlp(self.norm2(x)))
+  File "/home/hungnt/anaconda3/envs/gmoe/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/hungnt/anaconda3/envs/gmoe/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/hungnt/hungnt/DG-OMOE/domainbed/vision_transformer.py", line 344, in forward
+    if mask.any():
+KeyboardInterrupt

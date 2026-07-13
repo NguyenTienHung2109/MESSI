@@ -18,50 +18,50 @@ from domainbed import vision_transformer as vit_module
 class ExplicitMoEHead(nn.Module):
     """
     Implements:
-        h_m = E_m(z)          M expert MLPs  (z → r-dim)
-        pi(x) = softmax(G(z)) soft routing weights
+        h_m = E_m(z_moe)      M expert MLPs
+        pi(x) = softmax(G(z_moe)) soft routing weights
         h(x)  = sum_m pi_m * h_m
         y_hat = C(h(x))       linear classifier
 
-    Returns per-expert outputs h_m and routing weights pi so that the
-    variant-specific loss functions can operate on them.
+    Optional input projection maps backbone features into a compact MoE space
+    before routing, expert computation, and classification.
     """
-    def __init__(self, in_dim, expert_dim, num_experts, num_classes):
+    def __init__(self, in_dim, num_experts, num_classes, mlp_ratio=4,
+                 moe_dim=None):
         super().__init__()
         self.num_experts = num_experts
-        self.expert_dim  = expert_dim
+        self.in_dim      = in_dim
+        if moe_dim is None or (isinstance(moe_dim, str) and moe_dim.lower() in ('auto', 'none')):
+            moe_dim = in_dim
+        elif int(moe_dim) == 0:
+            moe_dim = in_dim
+        self.expert_dim  = int(moe_dim)
+        self.mlp_ratio   = mlp_ratio
+        hidden_dim       = int(round(mlp_ratio * self.expert_dim))
 
-        # M expert MLPs: each z → r
+        if self.expert_dim == in_dim:
+            self.input_proj = nn.Identity()
+        else:
+            self.input_proj = nn.Linear(in_dim, self.expert_dim)
+
         self.experts = nn.ModuleList([
             nn.Sequential(
-                nn.Linear(in_dim, expert_dim),
+                nn.Linear(self.expert_dim, hidden_dim),
                 nn.GELU(),
-                nn.Linear(expert_dim, expert_dim),
+                nn.Linear(hidden_dim, self.expert_dim),
             )
             for _ in range(num_experts)
         ])
 
-        # Soft routing network: z → (M,)
-        self.router = nn.Linear(in_dim, num_experts, bias=True)
-
-        # Final classifier: r → num_classes
-        self.classifier = nn.Linear(expert_dim, num_classes)
+        self.router = nn.Linear(self.expert_dim, num_experts, bias=True)
+        self.classifier = nn.Linear(self.expert_dim, num_classes)
 
     def forward(self, z):
-        """
-        Args:
-            z: (B, in_dim)
-        Returns:
-            logits:  (B, num_classes)
-            pi:      (B, M)     routing weights
-            h_stack: (B, M, r)  per-expert representations
-        """
-        h_list  = [E(z) for E in self.experts]     # M × (B, r)
-        h_stack = torch.stack(h_list, dim=1)        # (B, M, r)
-
-        pi = F.softmax(self.router(z), dim=-1)      # (B, M)
-        h  = (pi.unsqueeze(-1) * h_stack).sum(dim=1)  # (B, r)
-
+        z_moe = self.input_proj(z)
+        h_list  = [E(z_moe) for E in self.experts]
+        h_stack = torch.stack(h_list, dim=1)
+        pi = F.softmax(self.router(z_moe), dim=-1)
+        h  = (pi.unsqueeze(-1) * h_stack).sum(dim=1)
         logits = self.classifier(h)
         return logits, pi, h_stack
 
@@ -411,6 +411,172 @@ def loss_inv_MMD(h_stack, pi, y, num_classes, domain_ids, num_domains,
     return loss
 
 
+def loss_inv_MMD_ablation(h_stack, y, num_classes, domain_ids, num_domains,
+                          alignment_mode, sigmas=(1., 2., 4., 8., 16.),
+                          random_subset_q=0.30, random_seed=None):
+    """
+    Controlled-alignment ablations of L_inv^MMD.
+
+    Same architecture and same inner discrepancy (multi-bandwidth RBF MMD²) as
+    `loss_inv_MMD`, but replaces the routing-induced pair weights:
+
+        'global'        a_ijc^(m) = 1   for every valid (m,c,i,j); average
+                                          over valid pairs (weight scale matched
+                                          to MESSI by mean-normalization).
+
+        'random_subset' a_ijc^(m) = 1   for a random subset of valid (m,c,i,j),
+                                          0 otherwise; subset size matches the
+                                          top-`random_subset_q` count;
+                                          average over selected pairs.
+
+    A pair (m,c,i,j) is *valid* when both class-domain groups (m,i,c) and
+    (m,j,c) have ≥ 2 samples in the batch — exactly the same guard used by the
+    MESSI path in `loss_inv_MMD`.
+
+    Notes:
+        * `pi` is intentionally not consumed here: routing probabilities should
+          play no role in pair selection for these baselines.
+        * Random selection uses an isolated `torch.Generator` seeded by
+          `random_seed` (typically `base_seed + step`) so the loss is
+          reproducible and does not perturb the global RNG used by the rest
+          of training.
+
+    Args:
+        h_stack:        (B, M, r)
+        y:              (B,)        class labels
+        domain_ids:     (B,)        domain indices
+        alignment_mode: 'global' | 'random_subset'
+        sigmas:         RBF bandwidths (multi-scale)
+        random_subset_q: target sparsity for 'random_subset' (default 0.30)
+        random_seed:    seed for the random-subset RNG; if None falls back to
+                        torch's global RNG state.
+    """
+    if alignment_mode not in ('global', 'random_subset'):
+        raise ValueError(
+            f"alignment_mode must be 'global' or 'random_subset', "
+            f"got {alignment_mode!r}"
+        )
+
+    B, M, r = h_stack.shape
+
+    # PASS 1 — enumerate valid pairs using the same guard as the messi path.
+    valid_pairs = []
+    for m in range(M):
+        h_m = h_stack[:, m, :]
+        for c in range(num_classes):
+            mask_c = (y == c)
+            if mask_c.sum() < 2:
+                continue
+            for i in range(num_domains):
+                mask_i = mask_c & (domain_ids == i)
+                if mask_i.sum() < 2:
+                    continue
+                Z_i = h_m[mask_i]
+                for j in range(i + 1, num_domains):
+                    mask_j = mask_c & (domain_ids == j)
+                    if mask_j.sum() < 2:
+                        continue
+                    Z_j = h_m[mask_j]
+                    valid_pairs.append((Z_i, Z_j))
+
+    n_valid = len(valid_pairs)
+    if n_valid == 0:
+        return h_stack.new_zeros(())
+
+    if alignment_mode == 'global':
+        loss_sum = h_stack.new_zeros(())
+        for Z_i, Z_j in valid_pairs:
+            loss_sum = loss_sum + _mmd2_rbf(Z_i, Z_j, sigmas=sigmas)
+        return loss_sum / n_valid
+
+    # random_subset — exact-count selection matched to MESSI's top-q sparsity.
+    n_select = max(1, int(round(random_subset_q * n_valid)))
+    g = torch.Generator(device='cpu')
+    if random_seed is not None:
+        g.manual_seed(int(random_seed) & 0x7FFFFFFFFFFFFFFF)
+    chosen = torch.randperm(n_valid, generator=g).tolist()[:n_select]
+    loss_sum = h_stack.new_zeros(())
+    for idx in chosen:
+        Z_i, Z_j = valid_pairs[idx]
+        loss_sum = loss_sum + _mmd2_rbf(Z_i, Z_j, sigmas=sigmas)
+    return loss_sum / n_select
+
+
+def loss_inv_MMD_domain_routing(h_stack, pi, y, num_classes, domain_ids,
+                                num_domains, alpha=4.0,
+                                sigmas=(1., 2., 4., 8., 16.)):
+    """
+    Domain-only routing variant of L_inv^MMD.
+
+    Routing mass is computed per *domain* only — the class index is dropped:
+
+        rho_k^{(m)} = (1/|D_k|) * sum_{(x,y) in D_k} pi_m(x)
+
+    The pair-responsibility weight therefore loses its class index too:
+
+        a_{ij}^{(m)} = sigma(alpha * rho_i^{(m)}) * sigma(alpha * rho_j^{(m)})
+
+    The outer summation is unchanged from MESSI: still over (m, c, i<j) with
+    the same class-conditional MMD² between expert subsets
+    Z_{i,c}^{(m)}, Z_{j,c}^{(m)}. Only the pair weight differs (class-
+    independent here, class-conditional in MESSI). No mean-normalization —
+    the soft sigmoid weight serves as the implicit mask, identical to MESSI.
+
+    rho is detached so the router does not back-propagate through the weight.
+
+    Args:
+        h_stack:    (B, M, r)
+        pi:         (B, M)
+        y:          (B,)        class labels
+        domain_ids: (B,)        domain indices
+        alpha:      temperature for the routing-weight sigmoid (default 4.0)
+        sigmas:     RBF bandwidths (multi-scale)
+    """
+    B, M, r = h_stack.shape
+    loss = h_stack.new_zeros(())
+
+    for m in range(M):
+        h_m  = h_stack[:, m, :]
+        pi_m = pi[:, m]
+
+        # Pre-compute per-domain sigmoid(alpha * rho_k^(m)) once for this expert.
+        sig_per_dom = h_stack.new_zeros(num_domains)
+        valid_dom = [False] * num_domains
+        for k in range(num_domains):
+            mask_k = (domain_ids == k)
+            if mask_k.sum() < 2:
+                continue
+            rho_k = pi_m[mask_k].detach().mean()
+            sig_per_dom[k] = torch.sigmoid(alpha * rho_k)
+            valid_dom[k] = True
+
+        for c in range(num_classes):
+            mask_c = (y == c)
+            if mask_c.sum() < 2:
+                continue
+
+            for i in range(num_domains):
+                if not valid_dom[i]:
+                    continue
+                mask_i = mask_c & (domain_ids == i)
+                if mask_i.sum() < 2:
+                    continue
+                Z_i = h_m[mask_i]
+
+                for j in range(i + 1, num_domains):
+                    if not valid_dom[j]:
+                        continue
+                    mask_j = mask_c & (domain_ids == j)
+                    if mask_j.sum() < 2:
+                        continue
+                    Z_j = h_m[mask_j]
+
+                    a = sig_per_dom[i] * sig_per_dom[j]   # class-independent
+                    loss = loss + a * _mmd2_rbf(Z_i, Z_j, sigmas=sigmas)
+
+    return loss
+
+
 # ---------------------------------------------------------------------------
 # Variant 2: Conditional entropic Optimal Transport (Sinkhorn)
 # ---------------------------------------------------------------------------
@@ -489,6 +655,195 @@ def loss_inv_OT(h_stack, pi, y, num_classes, domain_ids, num_domains,
                                                 n_iter=sinkhorn_iters)
 
     return loss
+
+
+def loss_inv_OT_reliable(
+        h_stack, pi, y, num_classes, domain_ids, num_domains,
+        alpha=4.0, epsilon=0.1, sinkhorn_iters=50,
+        reliability_mode="none", r_n_min=2, r_tau=4.0,
+        r_emin=4.0, ema_evidence=None, r_detach=True, eps=1e-8,
+        reliable_log_detail="compact"):
+    """
+    Reliability-aware conditional entropic OT for rMESSI_InvOT.
+
+    The legacy none mode intentionally keeps the original unnormalized
+    routing-weighted sum so it can be compared directly to loss_inv_OT.
+    Reliability-enabled modes normalize by the effective weight sum.
+    """
+    if reliability_mode in ("ema_coverage_conf", "full"):
+        raise NotImplementedError(
+            f"reliability_mode={reliability_mode!r} is reserved for a later "
+            "confidence/stability ablation"
+        )
+    if reliability_mode not in ("none", "mask", "coverage", "ema_coverage"):
+        raise ValueError(
+            "reliability_mode must be one of: none, mask, coverage, "
+            "ema_coverage, ema_coverage_conf, full"
+        )
+    if reliable_log_detail not in ("compact", "full"):
+        raise ValueError("reliable_log_detail must be 'compact' or 'full'")
+    if reliability_mode == "ema_coverage" and ema_evidence is None:
+        raise ValueError("ema_evidence is required for reliability_mode=ema_coverage")
+
+    B, M, r = h_stack.shape
+    del B, r
+
+    loss_sum = h_stack.new_zeros(())
+    weight_sum = h_stack.new_zeros(())
+    legacy_loss = h_stack.new_zeros(())
+
+    r_sum = h_stack.new_zeros(())
+    r_min = None
+    r_max = None
+    coverage_sum = h_stack.new_zeros(())
+    coverage_candidate_sum = h_stack.new_zeros(())
+    ot_sum = h_stack.new_zeros(())
+    resp_sum = h_stack.new_zeros(())
+
+    num_candidate_pairs = 0
+    num_batch_keep_pairs = 0
+    num_valid_pairs = 0
+    num_valid_slots = 0
+    num_skipped_low_count = 0
+    nonzero_reliability_slots = 0
+    ema_E_valid_pairs = 0
+    ema_extra_pairs = 0
+
+    for c in range(num_classes):
+        mask_c = (y == c)
+        if mask_c.sum() < 2:
+            continue
+
+        domain_masks = []
+        domain_counts = []
+        present_domains = []
+        for i in range(num_domains):
+            mask_i = mask_c & (domain_ids == i)
+            n_i = int(mask_i.sum().item())
+            domain_masks.append(mask_i)
+            domain_counts.append(n_i)
+            if n_i > 0:
+                present_domains.append(i)
+
+        for pos, i in enumerate(present_domains):
+            n_i = domain_counts[i]
+            for j in present_domains[pos + 1:]:
+                n_j = domain_counts[j]
+                num_candidate_pairs += 1
+                batch_keep = n_i >= r_n_min and n_j >= r_n_min
+                if batch_keep:
+                    num_batch_keep_pairs += 1
+
+                if reliability_mode in ("mask", "coverage"):
+                    if n_i < r_n_min or n_j < r_n_min:
+                        num_skipped_low_count += 1
+                        continue
+                    coverage = h_stack.new_tensor(1.0)
+                    if reliability_mode == "coverage":
+                        ni = h_stack.new_tensor(float(n_i))
+                        nj = h_stack.new_tensor(float(n_j))
+                        coverage = torch.sqrt(
+                            (ni * nj) / ((ni + r_tau) * (nj + r_tau))
+                        )
+                elif reliability_mode == "ema_coverage":
+                    e_i = ema_evidence[i, c].to(device=h_stack.device,
+                                                dtype=h_stack.dtype)
+                    e_j = ema_evidence[j, c].to(device=h_stack.device,
+                                                dtype=h_stack.dtype)
+                    ema_valid = bool((e_i >= r_emin).item() and (e_j >= r_emin).item())
+                    if ema_valid:
+                        ema_E_valid_pairs += 1
+                        if not batch_keep:
+                            ema_extra_pairs += 1
+                    if not ema_valid:
+                        continue
+                    coverage = torch.sqrt(
+                        (e_i * e_j) / ((e_i + r_tau) * (e_j + r_tau))
+                    )
+                else:
+                    coverage = h_stack.new_tensor(1.0)
+
+                coverage_candidate_sum = coverage_candidate_sum + coverage.detach()
+                r_weight = coverage.detach() if r_detach else coverage
+                num_valid_pairs += 1
+
+                mask_i = domain_masks[i]
+                mask_j = domain_masks[j]
+                for m in range(M):
+                    h_m = h_stack[:, m, :]
+                    pi_m = pi[:, m]
+                    Z_i = h_m[mask_i]
+                    Z_j = h_m[mask_j]
+                    pi_i = pi_m[mask_i]
+                    pi_j = pi_m[mask_j]
+
+                    a = _routing_weight(pi_i, pi_j, alpha)
+                    ot_cost = _sinkhorn(Z_i, Z_j, epsilon=epsilon,
+                                        n_iter=sinkhorn_iters)
+                    weighted = r_weight * a
+
+                    legacy_loss = legacy_loss + a * ot_cost
+                    loss_sum = loss_sum + weighted * ot_cost
+                    weight_sum = weight_sum + weighted
+
+                    num_valid_slots += 1
+                    r_detached = r_weight.detach()
+                    if bool((r_detached > 0).item()):
+                        nonzero_reliability_slots += 1
+                    r_sum = r_sum + r_detached
+                    coverage_sum = coverage_sum + coverage.detach()
+                    ot_sum = ot_sum + ot_cost.detach()
+                    resp_sum = resp_sum + a.detach()
+                    r_min = r_detached if r_min is None else torch.minimum(r_min, r_detached)
+                    r_max = r_detached if r_max is None else torch.maximum(r_max, r_detached)
+
+    if reliability_mode == "none":
+        loss = legacy_loss
+    elif num_valid_slots == 0:
+        loss = h_stack.sum() * 0.0
+    else:
+        loss = loss_sum / (weight_sum + eps)
+
+    slot_denominator = max(float(num_candidate_pairs * M), 1.0)
+    pair_denominator = max(float(num_candidate_pairs), 1.0)
+    valid_slot_denominator = float(num_valid_slots) if num_valid_slots else 1.0
+    weighted_ot = loss_sum / (weight_sum + eps) if num_valid_slots else h_stack.new_zeros(())
+
+    # coverage_mean follows the historical convention: valid slots only.
+    diagnostics = {
+        "num_valid_slots": float(num_valid_slots),
+        "slot_density": float(num_valid_slots) / slot_denominator,
+        "r_mean": float((r_sum / slot_denominator).item()),
+        "r_nonzero_frac": float(nonzero_reliability_slots) / slot_denominator,
+        "w_sum": float(weight_sum.detach().item()),
+        "coverage_mean": float((coverage_sum / valid_slot_denominator).item()) if num_valid_slots else 0.0,
+        "mask_keep_frac": float(num_batch_keep_pairs) / pair_denominator,
+        "ot_cost_weighted_mean": float(weighted_ot.detach().item()),
+    }
+    if reliability_mode == "ema_coverage":
+        diagnostics.update({
+            "ema_E_valid_frac": float(ema_E_valid_pairs) / pair_denominator,
+            "ema_extra_pairs": float(ema_extra_pairs),
+        })
+    if reliable_log_detail == "full":
+        diagnostics.update({
+            "r_min": float(r_min.item()) if r_min is not None else 0.0,
+            "r_max": float(r_max.item()) if r_max is not None else 0.0,
+            "r_sum": float(r_sum.item()),
+            "num_candidate_pairs": float(num_candidate_pairs),
+            "num_valid_pairs": float(num_valid_pairs),
+            "num_skipped_low_count": float(num_skipped_low_count),
+            "mean_responsibility": float((resp_sum / valid_slot_denominator).item()) if num_valid_slots else 0.0,
+            "mean_ot_cost": float((ot_sum / valid_slot_denominator).item()) if num_valid_slots else 0.0,
+            "coverage_mean_candidate": float((coverage_candidate_sum / pair_denominator).item()),
+            "coverage_mean_valid": float((coverage_sum / valid_slot_denominator).item()) if num_valid_slots else 0.0,
+        })
+        if reliability_mode == "ema_coverage":
+            diagnostics.update({
+                "ema_keep_frac": float(ema_E_valid_pairs) / pair_denominator,
+                "ema_extra_frac": float(ema_extra_pairs) / pair_denominator,
+            })
+    return loss, diagnostics
 
 
 # ---------------------------------------------------------------------------

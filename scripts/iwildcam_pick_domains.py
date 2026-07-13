@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""iwildcam_pick_domains.py — pick a balanced source/test domain split for the
+"""DEPRECATED (2026-05-01): superseded by the WILDS-official-split refactor of
+WILDSIWildCam (see domainbed/datasets.py). The dataset now exposes 5 envs
+(train / val_ood / test_ood / id_val / id_test) by metadata.csv split, so the
+location-IDs emitted by this picker no longer correspond to valid env indices.
+Kept for historical reference only; use scripts/run_iwildcam_paper.sh instead.
+
+iwildcam_pick_domains.py — pick a balanced source/test domain split for the
 iWildCam K-sweep, then emit machine-readable JSON + a human-readable Markdown
 justification.
 

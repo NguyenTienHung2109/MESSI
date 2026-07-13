@@ -15,6 +15,16 @@ from wilds.datasets.fmow_dataset import FMoWDataset
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
+def _resolve_image_size_from_hparams(hparams, default=224):
+    raw_resolution = hparams.get("resolution", None)
+    raw_image_size = hparams.get("image_size", None)
+    if raw_resolution is not None and raw_resolution != "auto":
+        return int(raw_resolution)
+    if raw_image_size is not None:
+        return int(raw_image_size)
+    return int(default)
+
+
 DATASETS = [
     # Debug
     "Debug28",
@@ -36,6 +46,7 @@ DATASETS = [
     "WILDSCamelyon",
     "WILDSFMoW",
     "WILDSIWildCam",
+    "WILDSIWildCamERM",
     "MetaShift_K",
 ]
 
@@ -533,35 +544,263 @@ class WILDSFMoW(WILDSDataset):
             dataset, "region", test_envs, hparams['data_augmentation'], hparams)
 
 
-class WILDSIWildCam(WILDSDataset):
-    """
-    iWildCam (WILDS v2.0): camera-trap species classification.
+def _build_uint8_cache(wilds_dataset, row_indices, target_size=224, num_workers=4):
+    """Pre-decode each row to a uint8 tensor (3, H, W) and stack into (N, 3, H, W).
 
-    - Domain = camera location (323 locations)
-    - 182 classes (animal species)
-    - ~203k images total
-
-    For DomainBed leave-one-out / K-sweep, we treat each location as one
-    environment. With 323 envs, manual --test_envs lists become unwieldy;
-    pair with --max_samples_per_env (and ideally --source_envs) for K-sweep
-    experiments.
+    Uses a temp DataLoader with workers to parallelise PIL decode + resize.
+    Workers are torn down once the cache is built so they don't persist
+    alongside training/eval loaders.
     """
-    ENVIRONMENTS = [f"loc_{i}" for i in range(323)]
+    class _PreDecodeDS(torch.utils.data.Dataset):
+        def __init__(self, ds, idxs, sz):
+            self.ds = ds
+            self.idxs = np.asarray(idxs, dtype=np.int64)
+            self.sz = sz
+
+        def __len__(self):
+            return len(self.idxs)
+
+        def __getitem__(self, i):
+            row = int(self.idxs[i])
+            img = self.ds.get_input(row)
+            if not isinstance(img, Image.Image):
+                img = Image.fromarray(img)
+            img = img.convert('RGB').resize((self.sz, self.sz), Image.BILINEAR)
+            arr = np.array(img, dtype=np.uint8)          # writable copy
+            return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
+
+    n = len(row_indices)
+    out = torch.empty(n, 3, target_size, target_size, dtype=torch.uint8)
+    loader = torch.utils.data.DataLoader(
+        _PreDecodeDS(wilds_dataset, row_indices, target_size),
+        batch_size=128, num_workers=num_workers, shuffle=False,
+        pin_memory=False)
+    ptr = 0
+    for batch in loader:
+        b = batch.size(0)
+        out[ptr:ptr + b] = batch
+        ptr += b
+    return out
+
+
+class _WILDSIWildCamSplitEnv(torch.utils.data.Dataset):
+    """One env of WILDSIWildCam, defined by row indices into IWildCamDataset.
+
+    Exposes pre_split (class-stratified 80/20) so misc.split_dataset honors
+    the partition rather than re-splitting randomly. Both source and test
+    envs use 80/20 so env_*_in_acc and env_*_out_acc are well-defined.
+
+    When `cache_in_ram=True`, all images are pre-decoded to a uint8 tensor
+    stack at construction time (~150KB/image at 224x224). __getitem__ then
+    bypasses PIL decode + Resize and only converts uint8→float32 + normalizes,
+    giving a ~5-10x speedup on eval-heavy workloads. Memory cost: ~11GB for
+    the 4 WILDS eval envs combined; do NOT enable for the 243 train envs
+    (~19GB extra would push past available RAM).
+    """
+
+    _IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+    _IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+
+    def __init__(self, wilds_dataset, row_indices, transform,
+                 global_in_mask=None, cache_in_ram=False,
+                 cache_target_size=224,
+                 shared_cache=None, shared_cache_row_to_idx=None):
+        """Args:
+            global_in_mask: optional boolean array indexed by *row id in
+                the underlying WILDS dataset*. When provided, in/out are
+                derived from it (a row is `in` iff global_in_mask[row]) so
+                that aggregating in_splits across many env instances yields
+                the same global partition as a single class-stratified shuffle
+                over their union — matches the legacy single-env split.
+                When None, falls back to a per-env class-stratified shuffle
+                (used for the 4 eval envs where there is no shared partition).
+            shared_cache: optional uint8 tensor (N_total, 3, H, W) holding
+                pre-decoded images for a SUPERSET of this env (e.g. all 130k
+                train rows). Combined with `shared_cache_row_to_idx` (mapping
+                global WILDS row id → cache index), this env reads from the
+                shared tensor instead of building its own — avoids 243× cache
+                build overhead and memory duplication.
+        """
+        self.dataset = wilds_dataset
+        self.indices = np.asarray(row_indices, dtype=np.int64)
+        self.transform = transform
+        self._cache = None
+        self._shared_cache = None
+        self._cache_idx_for_local = None
+        if shared_cache is not None:
+            self._shared_cache = shared_cache
+            self._cache_idx_for_local = np.asarray(
+                [shared_cache_row_to_idx[int(r)] for r in self.indices],
+                dtype=np.int64)
+        elif cache_in_ram:
+            self._cache = _build_uint8_cache(
+                wilds_dataset, self.indices, target_size=cache_target_size)
+
+        if global_in_mask is not None:
+            local_in = [i for i, row in enumerate(self.indices)
+                        if bool(global_in_mask[int(row)])]
+            local_out = [i for i in range(len(self.indices))
+                         if i not in set(local_in)]
+            # If a tiny env happens to land entirely in `out` (no `in`
+            # samples), keep at least one in `in` so the train loader is
+            # non-empty.
+            if not local_in and local_out:
+                local_in = [local_out[0]]
+                local_out = local_out[1:]
+            self.pre_split = {"in": sorted(local_in),
+                              "out": sorted(local_out)}
+            return
+
+        from collections import defaultdict
+        labels = wilds_dataset.y_array[self.indices].tolist()
+        by_cls: dict[int, list[int]] = defaultdict(list)
+        for i, c in enumerate(labels):
+            by_cls[int(c)].append(i)
+        rng = np.random.RandomState(0)
+        in_idx, out_idx = [], []
+        for _, idxs in by_cls.items():
+            idxs = list(idxs)
+            rng.shuffle(idxs)
+            if len(idxs) <= 1:
+                # Tiny class — keep the sole sample in `in` so the train
+                # loader is non-empty; `out` may be empty for this class.
+                in_idx.extend(idxs)
+                continue
+            k_out = max(1, int(round(0.2 * len(idxs))))
+            # Guarantee in_idx gets at least one sample of every class with ≥2.
+            k_out = min(k_out, len(idxs) - 1)
+            out_idx.extend(idxs[:k_out])
+            in_idx.extend(idxs[k_out:])
+        self.pre_split = {"in": sorted(in_idx), "out": sorted(out_idx)}
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, idx):
+        row = int(self.indices[idx])
+        y = self.dataset.y_array[row]
+        if self._shared_cache is not None:
+            cache_i = int(self._cache_idx_for_local[idx])
+            x = self._shared_cache[cache_i].float() / 255.0
+            x = (x - self._IMAGENET_MEAN) / self._IMAGENET_STD
+            return x, y
+        if self._cache is not None:
+            x = self._cache[idx].float() / 255.0
+            x = (x - self._IMAGENET_MEAN) / self._IMAGENET_STD
+            return x, y
+        x = self.dataset.get_input(row)
+        if not isinstance(x, Image.Image):
+            x = Image.fromarray(x)
+        return self.transform(x), y
+
+    def get_labels(self):
+        return self.dataset.y_array[self.indices]
+
+
+class WILDSIWildCam(MultipleDomainDataset):
+    """iWildCam (WILDS v2.0) — 5-env official-split layout.
+
+    Envs:
+        env_0 = train pool   (~129,809 imgs from 243 source camera locations)
+        env_1 = val_ood       (32 unseen locations,  14,961 imgs)
+        env_2 = test_ood      (48 unseen locations,  42,791 imgs)
+        env_3 = id_val        (held-out from train locations,  7,314 imgs)
+        env_4 = id_test       (held-out from train locations,  8,154 imgs)
+
+    Default usage: --test_envs 1 2 3 4 (env_0 is the only training env).
+
+    Multi-domain training for invariance losses (e.g. GMOE_InvMMD): env_0
+    exposes `location_per_idx_in` so train.py can build a
+    LocationGroupedBatchSampler that emits batches grouped by source camera
+    location. `GROUP_SAMPLER_K` random locations per batch × `GROUP_SAMPLER_K_BATCH`
+    samples each gives algorithms a multi-domain view despite there being
+    only one source env.
+    """
+    IMG_SIZE = 224
+    INPUT_SHAPE = (3, IMG_SIZE, IMG_SIZE)
+    ENVIRONMENTS = ["train", "val_ood", "test_ood", "id_val", "id_test"]
     N_STEPS = 7501
     CHECKPOINT_FREQ = 500
-    # K-sweep math: train_loaders=K + eval_loaders=2*(K+|test|) + their workers
-    # all live as forked processes. At K=16 even N_WORKERS=2 gives 108 forked
-    # workers each holding the WILDS dataset object via shared memory,
-    # blowing past 32GB RAM (observed OOM-kill with shmem-rss=16GB). Use
-    # N_WORKERS=0 (main-process loading) to keep K=16 runnable.
+    # Single train env + 4 eval envs = 5 InfiniteDataLoader; safe to fork.
     N_WORKERS = 0
+    # Eval has 5 envs × 2 splits = 10 loaders; safe to fork.
+    EVAL_N_WORKERS = 4
+    # When set, train.py uses LocationGroupedBatchSampler on env_0 to make
+    # each batch contain K random source locations × K_BATCH samples each.
+    # K=4 → 6 invariance pairs per batch (sufficient L_inv signal).
+    GROUP_SAMPLER_K = 4
+    GROUP_SAMPLER_K_BATCH = 8  # samples per location per batch (total bs=K*K_BATCH=32)
 
     def __init__(self, root, test_envs, hparams):
         from wilds.datasets.iwildcam_dataset import IWildCamDataset
+        super().__init__()
         dataset = IWildCamDataset(root_dir=root)
-        super().__init__(
-            dataset, "location", test_envs,
-            hparams['data_augmentation'], hparams)
+        img_size = _resolve_image_size_from_hparams(hparams, self.IMG_SIZE)
+
+        transform = transforms.Compose([
+            transforms.Resize((img_size, img_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
+        augment_transform = transforms.Compose([
+            transforms.Resize((img_size, img_size)),
+            transforms.RandomResizedCrop(img_size, scale=(0.7, 1.0)),
+            transforms.RandomHorizontalFlip(),
+            transforms.ColorJitter(0.3, 0.3, 0.3, 0.3),
+            transforms.RandomGrayscale(),
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
+
+        split_array = np.asarray(dataset._split_array)
+        # location_remapped is column 0 of metadata_array (see WILDS source).
+        loc_array = dataset.metadata_array[:, 0].numpy()
+
+        # Build env_0 = train pool (single source env), with location metadata
+        # attached so a LocationGroupedBatchSampler can sample by group.
+        train_row_ids = np.where(split_array == 0)[0]
+        use_aug = bool(hparams.get('data_augmentation'))
+        train_env = _WILDSIWildCamSplitEnv(
+            dataset, train_row_ids,
+            augment_transform if use_aug else transform)
+        # location_per_idx_in: location_remapped for each pre_split['in'] index.
+        # train.py uses this (after _SplitDataset.keys remapping) to feed the
+        # grouped batch sampler.
+        train_in_local = np.asarray(train_env.pre_split['in'], dtype=np.int64)
+        train_env.location_per_idx_in = loc_array[train_row_ids[train_in_local]].astype(np.int64)
+
+        self.datasets = [train_env]
+
+        # 4 evaluation envs (always no-aug; cache in RAM so eval skips PIL).
+        eval_split_to_name = [(1, "val_ood"), (2, "test_ood"),
+                              (3, "id_val"), (4, "id_test")]
+        cache_eval = bool(hparams.get('cache_eval_in_ram', True))
+        for split_id, name in eval_split_to_name:
+            row_idx = np.where(split_array == split_id)[0]
+            print(f"[WILDSIWildCam] caching eval env {name} "
+                  f"({len(row_idx)} imgs) in RAM..." if cache_eval else
+                  f"[WILDSIWildCam] eval env {name}: {len(row_idx)} imgs (no cache)",
+                  flush=True)
+            self.datasets.append(
+                _WILDSIWildCamSplitEnv(
+                    dataset, row_idx, transform, cache_in_ram=cache_eval,
+                    cache_target_size=img_size))
+
+        self.input_shape = (3, img_size, img_size)
+        self.num_classes = dataset.n_classes
+
+
+class WILDSIWildCamERM(WILDSIWildCam):
+    """Plain-ERM iWildCam wrapper using the official WILDS 5-way split.
+
+    This keeps the same env layout and data transforms as WILDSIWildCam, but
+    disables the location-grouped sampler so ERM trains with an ordinary
+    random loader over the train pool.
+    """
+    GROUP_SAMPLER_K = None
+    GROUP_SAMPLER_K_BATCH = None
 
 
 class _MetaShiftCSVEnv(torch.utils.data.Dataset):

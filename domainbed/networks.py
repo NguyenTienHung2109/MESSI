@@ -163,6 +163,46 @@ class MNIST_CNN(nn.Module):
         return x
 
 
+class WILDS_CNN(nn.Module):
+    """From-scratch CNN cho input 224×224 (WILDS-style datasets).
+
+    Cùng style với MNIST_CNN: plain Conv → ReLU → GroupNorm, không residual,
+    không pretrain. 6 conv blocks scale dần channels, AdaptiveAvgPool ra
+    n_outputs=256. ~1.7M params (~1/15 ResNet50). GroupNorm thay BN vì BN
+    bị poisoned khi minibatch chứa nhiều domain khác phân bố.
+    """
+    n_outputs = 256
+
+    def __init__(self, input_shape):
+        super().__init__()
+        nc = input_shape[0]
+        self.conv1 = nn.Conv2d(nc, 32, 3, stride=2, padding=1)
+        self.conv2 = nn.Conv2d(32, 64, 3, stride=2, padding=1)
+        self.conv3 = nn.Conv2d(64, 128, 3, stride=2, padding=1)
+        self.conv4 = nn.Conv2d(128, 256, 3, stride=2, padding=1)
+        self.conv5 = nn.Conv2d(256, 256, 3, stride=2, padding=1)
+        self.conv6 = nn.Conv2d(256, 256, 3, stride=1, padding=1)
+
+        self.bn1 = nn.GroupNorm(8, 32)
+        self.bn2 = nn.GroupNorm(8, 64)
+        self.bn3 = nn.GroupNorm(8, 128)
+        self.bn4 = nn.GroupNorm(8, 256)
+        self.bn5 = nn.GroupNorm(8, 256)
+        self.bn6 = nn.GroupNorm(8, 256)
+
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+
+    def forward(self, x):
+        x = F.relu(self.conv1(x)); x = self.bn1(x)
+        x = F.relu(self.conv2(x)); x = self.bn2(x)
+        x = F.relu(self.conv3(x)); x = self.bn3(x)
+        x = F.relu(self.conv4(x)); x = self.bn4(x)
+        x = F.relu(self.conv5(x)); x = self.bn5(x)
+        x = F.relu(self.conv6(x)); x = self.bn6(x)
+        x = self.avgpool(x).view(len(x), -1)
+        return x
+
+
 class ContextNet(nn.Module):
     def __init__(self, input_shape):
         super(ContextNet, self).__init__()
@@ -197,20 +237,33 @@ class PositionalEmbedding1D(nn.Module):
 
 class ViTFeaturizer(nn.Module):
     """Vanilla ViT (DeiT) featurizer — no MoE. Returns CLS token embedding."""
-    def __init__(self, model_name, hparams=None):
+    def __init__(self, model_name, hparams=None, input_shape=None):
         super().__init__()
         if not hasattr(vision_transformer, model_name):
             raise ValueError(f"Unknown ViT model: {model_name}")
         factory = getattr(vision_transformer, model_name)
+        hparams = hparams or {}
+        img_size = int(input_shape[1]) if input_shape is not None else 224
+        in_chans = int(input_shape[0]) if input_shape is not None else 3
+        if img_size != 224 or in_chans != 3:
+            print(f"[ViTFeaturizer:{model_name}] shape override "
+                  f"(img_size={img_size}, in_chans={in_chans}); "
+                  f"pretrained positional embeddings will be resized when "
+                  f"supported by the model loader.")
         # num_classes=0 → head is Identity, so forward() returns CLS features.
         # moe_layers=None → all blocks use the dense MLP path (no MoE).
-        self.network = factory(pretrained=True, num_classes=0)
+        self.network = factory(
+            pretrained=True,
+            num_classes=0,
+            img_size=img_size,
+            in_chans=in_chans,
+        )
         self.n_outputs = self.network.embed_dim
-        self.hparams = hparams or {}
+        self.hparams = hparams
 
     def forward(self, x):
-        # Inputs are (B,3,224,224) for our DG datasets; ViT.forward returns CLS embedding
-        # because num_classes=0 makes self.head an Identity.
+        # ViT.forward returns CLS embedding because num_classes=0 makes
+        # self.head an Identity.
         return self.network(x)
 
 
@@ -222,13 +275,15 @@ def Featurizer(input_shape, hparams=None):
         return MNIST_CNN(input_shape)
     elif input_shape[1:3] == (32, 32):
         return wide_resnet.Wide_ResNet(input_shape, 16, 2, 0.)
-    elif input_shape[1:3] == (224, 224):
-        model_name = (hparams or {}).get('model', '')
-        if model_name.startswith('deit_') or model_name.startswith('vit_'):
-            return ViTFeaturizer(model_name, hparams)
+
+    model_name = (hparams or {}).get('model', '')
+    if model_name.startswith('deit_') or model_name.startswith('vit_'):
+        return ViTFeaturizer(model_name, hparams, input_shape=input_shape)
+    if model_name == 'cnn':
+        return WILDS_CNN(input_shape)
+    if model_name in ('', 'resnet50', 'resnet18'):
         return ResNet(input_shape, hparams)
-    else:
-        raise NotImplementedError
+    raise NotImplementedError
 
 
 def Classifier(in_features, out_features, is_nonlinear=False):
