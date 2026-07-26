@@ -40,5 +40,5 @@ Evaluate a checkpoint on one complete environment:
 python -m domainbed.scripts.eval \
     --env 0 \
     --dir_dataset /path/to/datasets/PACS \
-    --dir_ckpt /path/to/model.pkl
+    --dir_ckpt /path/to/model.pt
 ```

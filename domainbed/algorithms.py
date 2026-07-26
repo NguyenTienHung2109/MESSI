@@ -1024,7 +1024,7 @@ class MESSI(MESSIVariantBase):
         self.lambda_sp = hparams.get("lambda_sp", 0.02)
         self.lambda_bal = hparams.get("lambda_bal", 0.02)
         self.lambda_div = hparams.get("lambda_div", 0.02)
-        inv_type = hparams.get("inv_type", "A")
+        inv_type = hparams.get("inv_type", "OT")
         if inv_type not in self._VALID_INV_TYPES:
             raise ValueError(
                 f"inv_type={inv_type!r} not in {sorted(self._VALID_INV_TYPES)}"

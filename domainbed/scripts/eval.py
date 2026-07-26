@@ -6,13 +6,15 @@ Example:
         --dir_dataset /path/to/PACS \
         --dir_ckpt /path/to/model.pkl
 
-The checkpoint supplies the dataset name, model architecture, and hparams, so
-the command line intentionally only exposes the three inputs needed at eval
-time. ``dir_dataset`` may point either to the dataset directory itself (for
-example ``.../data/PACS``) or to its parent (``.../data``).
+The dataset name, model architecture, and hparams may be embedded in the
+checkpoint or stored in a ``metadata.json`` sidecar beside weights-only
+checkpoints. The command line intentionally only exposes the three inputs
+needed at eval time. ``dir_dataset`` may point either to the dataset directory
+itself (for example ``.../data/PACS``) or to its parent (``.../data``).
 """
 
 import argparse
+import json
 import os
 import sys
 import warnings
@@ -34,6 +36,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from domainbed import datasets
 from domainbed.deit_transformer import DeiTFeaturizer, ExplicitMoEHead
+
+
+_METADATA_FILENAME = "metadata.json"
+_CHECKPOINT_FIELDS = {
+    "args",
+    "model_input_shape",
+    "model_num_classes",
+    "model_num_domains",
+    "model_hparams",
+}
 
 
 class _MESSIInferenceModel(nn.Module):
@@ -70,22 +82,98 @@ class _MESSIInferenceModel(nn.Module):
         return logits
 
 
+def _same_metadata_value(field, left, right):
+    if field == "model_input_shape":
+        return tuple(left) == tuple(right)
+    return left == right
+
+
+def _merge_sidecar_metadata(checkpoint, metadata, metadata_path):
+    if not isinstance(metadata, dict):
+        raise ValueError(f"Metadata must be a JSON object: {metadata_path}")
+    if metadata.get("schema_version") != 1:
+        raise ValueError(
+            f"Unsupported or missing schema_version in {metadata_path}"
+        )
+
+    allowed = _CHECKPOINT_FIELDS | {"schema_version"}
+    unexpected = sorted(set(metadata) - allowed)
+    if unexpected:
+        raise ValueError(
+            f"Unexpected metadata fields in {metadata_path}: {unexpected}"
+        )
+
+    for field in ("args", "model_hparams"):
+        sidecar_value = metadata.get(field)
+        if sidecar_value is None:
+            continue
+        if not isinstance(sidecar_value, dict):
+            raise ValueError(
+                f"metadata[{field!r}] must be an object: {metadata_path}"
+            )
+        embedded_value = checkpoint.get(field)
+        if embedded_value is None:
+            checkpoint[field] = dict(sidecar_value)
+            continue
+        if not isinstance(embedded_value, dict):
+            raise ValueError(f"checkpoint[{field!r}] must be a mapping")
+
+        merged = dict(sidecar_value)
+        for key, value in embedded_value.items():
+            if key in sidecar_value and sidecar_value[key] != value:
+                raise ValueError(
+                    f"Checkpoint/metadata conflict for {field}.{key}: "
+                    f"{value!r} != {sidecar_value[key]!r}"
+                )
+            merged[key] = value
+        checkpoint[field] = merged
+
+    for field in (
+        "model_input_shape",
+        "model_num_classes",
+        "model_num_domains",
+    ):
+        if field not in metadata:
+            continue
+        if field in checkpoint and not _same_metadata_value(
+            field, checkpoint[field], metadata[field]
+        ):
+            raise ValueError(
+                f"Checkpoint/metadata conflict for {field}: "
+                f"{checkpoint[field]!r} != {metadata[field]!r}"
+            )
+        checkpoint.setdefault(field, metadata[field])
+
+
 def _load_checkpoint(path):
     if not os.path.isfile(path):
         raise FileNotFoundError(f"Checkpoint not found: {path}")
 
     checkpoint = torch.load(path, map_location="cpu")
-    required = {
-        "args",
-        "model_input_shape",
-        "model_num_classes",
-        "model_num_domains",
-        "model_hparams",
-        "model_dict",
-    }
+    if not isinstance(checkpoint, dict):
+        raise ValueError("Checkpoint must contain a mapping")
+    if "model_dict" not in checkpoint:
+        raise ValueError("Checkpoint is missing required field: model_dict")
+
+    metadata_path = os.path.join(
+        os.path.dirname(os.path.abspath(path)), _METADATA_FILENAME
+    )
+    if os.path.isfile(metadata_path):
+        with open(metadata_path, encoding="utf-8") as handle:
+            metadata = json.load(handle)
+        _merge_sidecar_metadata(checkpoint, metadata, metadata_path)
+
+    required = _CHECKPOINT_FIELDS | {"model_dict"}
     missing = sorted(required - checkpoint.keys())
     if missing:
-        raise ValueError(f"Checkpoint is missing required fields: {missing}")
+        detail = (
+            f" Add {_METADATA_FILENAME} beside weights-only checkpoints."
+            if not os.path.isfile(metadata_path)
+            else ""
+        )
+        raise ValueError(
+            f"Checkpoint is missing required fields: {missing}.{detail}"
+        )
     return checkpoint
 
 
