@@ -1,31 +1,5 @@
 # domainbed/losses/cirl_utils.py
-"""
-CIRL (Causality Inspired Representation Learning, CVPR 2022) building blocks,
-ported from https://github.com/BIT-DA/CIRL and adapted to operate on
-DomainBed-style mini-batches inside DG-OMOE.
-
-Three pieces:
-
-  1.  fourier_amplitude_mix_batched(x)
-        Tensor-domain version of CIRL's `colorful_spectrum_mix`. Takes a
-        batch of normalized images and produces a same-shape, label-preserving
-        augmented batch where the amplitude spectrum has been linearly mixed
-        with another (random) sample from the batch while the phase is kept.
-        Phase carries object structure (the label cause), amplitude carries
-        style — so this is the Fourier-domain "common across domains" prior.
-
-  2.  Masker
-        Differentiable top-k mask network (Gumbel-softmax + iterative max).
-        Splits a feature vector f into a "superior / causal" subset
-        (f * mask) and an "inferior" subset (f * (1 - mask)), both used by
-        downstream classifiers. Trained adversarially against those
-        classifiers — see `GMOE_CIRL` in algorithms.py.
-
-  3.  factorization_loss(f_a, f_b)
-        Barlow-Twins-style cross-correlation objective. Pushes corresponding
-        dimensions of (original, augmented) features to be correlated and
-        distinct dimensions to be decorrelated.
-"""
+"""CIRL Fourier mixing, feature masking, and factorization utilities."""
 
 from __future__ import annotations
 
@@ -38,12 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-# ---------------------------------------------------------------------------
-# 1. Fourier amplitude mix (image-level augmentation, on GPU)
-# ---------------------------------------------------------------------------
-
-# ImageNet stats — DomainBed normalizes inputs with these, so we de-normalize
-# before the FFT (operate in [0, 1] image space) and re-normalize after.
+# ImageNet normalization values used around the Fourier transform.
 _IMAGENET_MEAN = (0.485, 0.456, 0.406)
 _IMAGENET_STD = (0.229, 0.224, 0.225)
 
@@ -86,21 +55,18 @@ def fourier_amplitude_mix_batched(
     if B < 2:
         return x.clone()
 
-    # 1. Pick the partner image for each sample (no self-pairing).
+    # Select a different partner for each image.
     perm = torch.randperm(B, device=x.device)
     same = (perm == torch.arange(B, device=x.device))
     if same.any():
-        # rotate any self-mappings by 1 — guarantees a different partner.
+        # Avoid self-pairing.
         perm[same] = (perm[same] + 1) % B
 
-    # 2. De-normalize to roughly [0, 1] image space and clamp; the FFT is
-    #    insensitive to small clipping, but we want non-negative inputs so
-    #    that the FFT magnitudes are interpretable as "amplitudes".
+    # Convert normalized inputs to non-negative image values.
     x_img = _denormalize(x).clamp(0.0, 1.0)
     x_partner = x_img[perm]
 
-    # 3. FFT both. We use rfft2 for memory efficiency — the negative-frequency
-    #    half is implied by Hermitian symmetry of real input.
+    # Transform both batches to the frequency domain.
     fft_a = torch.fft.fft2(x_img, dim=(-2, -1))
     fft_b = torch.fft.fft2(x_partner, dim=(-2, -1))
 
@@ -108,9 +74,7 @@ def fourier_amplitude_mix_batched(
     abs_b = fft_b.abs()
     pha_a = torch.angle(fft_a)
 
-    # 4. Center-shift so the low frequencies sit in the middle of the H×W
-    #    grid, then mix only the central (h_crop × w_crop) block — same as
-    #    CIRL's reference implementation.
+    # Mix the centered low-frequency block.
     abs_a_c = torch.fft.fftshift(abs_a, dim=(-2, -1))
     abs_b_c = torch.fft.fftshift(abs_b, dim=(-2, -1))
 
@@ -119,7 +83,7 @@ def fourier_amplitude_mix_batched(
     h0 = H // 2 - h_crop // 2
     w0 = W // 2 - w_crop // 2
 
-    # Per-sample mixing coefficient. Shape (B, 1, 1, 1) so it broadcasts.
+    # Draw one broadcastable mixing coefficient per sample.
     lam = torch.rand(B, 1, 1, 1, device=x.device, dtype=x.dtype) * alpha
 
     abs_mixed = abs_a_c.clone()
@@ -129,8 +93,7 @@ def fourier_amplitude_mix_batched(
         lam * block_b + (1.0 - lam) * block_a
     )
 
-    # 5. Un-shift, recombine with the *original phase* of x (this is what
-    #    keeps the object/label intact), and inverse-FFT back to image space.
+    # Restore the original phase and return to image space.
     abs_mixed = torch.fft.ifftshift(abs_mixed, dim=(-2, -1))
     fft_mixed = abs_mixed * torch.exp(1j * pha_a)
     x_aug_img = torch.fft.ifft2(fft_mixed, dim=(-2, -1)).real
@@ -139,35 +102,10 @@ def fourier_amplitude_mix_batched(
     return _normalize(x_aug_img)
 
 
-# ---------------------------------------------------------------------------
-# 2. Masker — differentiable top-k feature selector
-# ---------------------------------------------------------------------------
+# Differentiable top-k feature selector.
 
 class Masker(nn.Module):
-    """
-    Learns a soft mask m in [0, 1]^D over a D-dim feature vector that selects
-    approximately k "causal" dimensions. Implementation mirrors the reference
-    CIRL repo:
-
-        score = MLP(f)                 # (B, D)
-        for _ in range(k):
-            soft = gumbel_softmax(score, dim=-1, tau=0.5)   # ~one-hot of D
-            m   = max(m, soft)         # accumulate selections, elementwise
-
-    Each gumbel_softmax pass picks (softly) one dimension; doing this k
-    times and taking the elementwise max gives an approximately k-hot mask
-    in a differentiable way.
-
-    Notes
-    -----
-    * `in_dim` is the encoder feature size (e.g. 384 for DeiT-S, or
-      `expert_dim` for the post-MoE feature in DG-OMOE).
-    * `k` must be < in_dim and is typically ~60% of it (CIRL uses 308/512
-      for ResNet-18 PACS; we default to round(0.6 * in_dim) for whatever
-      backbone is in use).
-    * The final BatchNorm is non-affine; it just standardises the logits
-      before the Gumbel sampler so that no dimension dominates a priori.
-    """
+    """Learn an approximately k-hot feature mask with Gumbel softmax."""
 
     def __init__(
         self,
@@ -202,18 +140,10 @@ class Masker(nn.Module):
         self.bn = nn.BatchNorm1d(in_dim, affine=False)
 
     def forward(self, f: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            f: (B, in_dim) feature vectors.
-
-        Returns:
-            mask: (B, in_dim) soft mask in [0, 1], approximately k-hot per
-                  row.
-        """
+        """Return an approximately k-hot mask for ``[B, in_dim]`` features."""
         score = self.bn(self.mlp(f))
         mask = torch.zeros_like(score)
-        # Iteratively pick k dimensions; each call to gumbel_softmax samples
-        # fresh noise so different dimensions are selected each pass.
+        # Repeated samples allow different dimensions to be selected.
         cur = score
         for _ in range(self.k):
             soft = F.gumbel_softmax(cur, tau=self.tau, hard=False, dim=-1)
@@ -221,9 +151,7 @@ class Masker(nn.Module):
         return mask
 
 
-# ---------------------------------------------------------------------------
-# 3. Factorization (Barlow-Twins) loss between original/augmented features
-# ---------------------------------------------------------------------------
+# Feature-factorization loss.
 
 def _off_diagonal(x: torch.Tensor) -> torch.Tensor:
     """Flatten the off-diagonal entries of a square matrix."""
@@ -238,21 +166,7 @@ def factorization_loss(
     f_b: torch.Tensor,
     off_diag_weight: float = 5e-3,
 ) -> torch.Tensor:
-    """
-    Barlow-Twins cross-correlation objective:
-
-        L = sum_i (C_ii - 1)^2 / D  +  off_diag_weight * sum_{i!=j} C_ij^2 / (D*(D-1))
-
-    where C is the cross-correlation matrix between batch-normalized f_a and
-    f_b. Pushes corresponding dimensions across views to be correlated and
-    different dimensions to be decorrelated — a "factorized" representation.
-
-    Args:
-        f_a, f_b: (B, D) feature batches from two views (e.g. original /
-            Fourier-augmented).
-        off_diag_weight: lambda in the Barlow-Twins paper (default 5e-3,
-            matching CIRL's reference value).
-    """
+    """Compute the Barlow Twins cross-correlation objective."""
     if f_a.shape != f_b.shape:
         raise ValueError(f'shape mismatch: {f_a.shape} vs {f_b.shape}')
 
@@ -269,17 +183,10 @@ def factorization_loss(
     return on_diag + off_diag_weight * off_diag
 
 
-# ---------------------------------------------------------------------------
-# Schedule helper (sigmoid ramp-up of the factorization weight)
-# ---------------------------------------------------------------------------
+# Factorization-weight schedule.
 
 def sigmoid_rampup(current: float, rampup_length: float) -> float:
-    """
-    Exponential ramp-up from 0 -> 1 over `rampup_length` units, following
-    Tarvainen & Valpola (2017). Used by CIRL to grow the factorization
-    weight from 0 over the first few epochs so the encoder stabilises
-    before the Barlow-Twins term kicks in.
-    """
+    """Ramp a weight from zero to one over the requested interval."""
     if rampup_length <= 0:
         return 1.0
     current = float(np.clip(current, 0.0, rampup_length))

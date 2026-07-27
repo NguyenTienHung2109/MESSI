@@ -74,7 +74,7 @@ class Q(object):
         return repr(self._list)
 
     def _append(self, item):
-        """Unsafe, be careful you know what you're doing."""
+        """Evaluate the stored expression without safety checks."""
         self._list.append(item)
 
     def group(self, selector):

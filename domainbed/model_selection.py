@@ -56,9 +56,7 @@ class SelectionMethod:
 
 
 class OracleSelectionMethod(SelectionMethod):
-    """Like Selection method which picks argmax(test_out_acc) across all hparams
-    and checkpoints, but instead of taking the argmax over all
-    checkpoints, we pick the last checkpoint, i.e. no early stopping."""
+    """Select the final checkpoint without early stopping."""
     name = "test-domain validation set (oracle)"
 
     @classmethod

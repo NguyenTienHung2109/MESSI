@@ -160,15 +160,8 @@ class ColoredMNIST(MultipleEnvironmentMNIST):
 
 
 class ColoredMNIST_E(MultipleEnvironmentMNIST):
-    """ColoredMNIST with a configurable number of training environments E.
-
-    Protocol from Wang et al., "Lost Domain Generalization Is a Natural
-    Consequence of Lack of Training Domains", AAAI 2024.
-    """
-    # Class-level placeholder of length default_E + 1 = 9, so that
-    # datasets.num_environments("ColoredMNIST_E") works before the dataset
-    # is instantiated (e.g. in test_datasets.py). The real, p_e-annotated
-    # names are written to self.ENVIRONMENTS in __init__.
+    """Colored MNIST with a configurable number of training environments."""
+    # Placeholder used before instance-specific names are available.
     ENVIRONMENTS = [f'env_{i}' for i in range(9)]
 
     def __init__(self, root, test_envs, hparams):
@@ -210,15 +203,9 @@ class ColoredMNIST_E(MultipleEnvironmentMNIST):
 
 
 class ColoredMNIST_K(MultipleDomainDataset):
-    """ColoredMNIST with K source domains + 1 fixed test domain (p=0.5).
+    """Colored MNIST with K source domains and a fixed p=0.5 test domain.
 
-    Sample budget (fixed across K):
-      - test env: exactly `test_size` samples (default 10000), p_color = 0.5
-      - source envs: remaining (70000 - test_size) split equally across K
-        (any remainder < K is dropped)
-
-    Source p_color values: linspace(1/(K+2), (K+1)/(K+2), K+1) with the value
-    closest to 0.5 dropped. Test env appended at index K (last).
+    The fixed sample budget is split equally across source domains.
     """
     ENVIRONMENTS = [f'env_{i}' for i in range(10)]
 
@@ -318,35 +305,10 @@ class RotatedMNIST(MultipleEnvironmentMNIST):
 
 
 class RotatedColoredMNIST_K(MultipleDomainDataset):
-    """Rotated + Colored MNIST: K envs laid out row-major in a 13x10 grid.
+    """Rotated Colored MNIST on a row-major rotation-color grid.
 
-    User specifies `num_source_domains` (= K, total env count). Envs are
-    placed in a (rotation, color) grid in **row-major order**: each row
-    fills all 10 colors before moving to the next rotation. The final row
-    may be partial.
-
-    Layout for K = 10*r + s   (where r = K//10, s = K - 10*r):
-        - r FULL rows: rotations [0, 15, ..., 15*(r-1)],
-          each with all 10 colors [0.0, 0.1, ..., 0.9]
-        - 1 PARTIAL row (only if s > 0): rotation 15*r,
-          with the first s colors [0.0, 0.1, ..., 0.1*(s-1)]
-
-    Examples:
-        K=3   -> 1 partial row:  rot=0, colors [0.0, 0.1, 0.2]
-        K=10  -> 1 full row:     rot=0, colors [0.0..0.9]
-        K=11  -> 1 full + 1 partial: rot=0 (10 colors) + rot=15 (color 0.0)
-        K=25  -> 2 full + 1 partial: rot=0,15 (10 colors each) + rot=30 (5 colors)
-        K=130 -> 13 full rows (max)
-
-    Env at index `idx` has:
-        rot   = 15 * (idx // 10)
-        p     = 0.1 * (idx % 10)
-
-    Sample budget: full MNIST (70000 samples) shuffled and split equally
-    across the K envs. The user selects test env(s) externally via
-    DomainBed's `test_envs` argument.
-
-    Constraint: 1 <= K <= 130.
+    Environment ``idx`` uses rotation ``15 * (idx // 10)`` and color
+    probability ``0.1 * (idx % 10)``. The supported range is 1-130.
     """
     ENVIRONMENTS = [f'env_{k}' for k in range(130)]  # placeholder
 
@@ -359,7 +321,7 @@ class RotatedColoredMNIST_K(MultipleDomainDataset):
         if K < 1 or K > 130:
             raise ValueError(f"num_source_domains must be in [1, 130], got {K}")
 
-        # ---- Load full MNIST (train + test pooled) ----
+        # Pool the MNIST train and test sets.
         original_dataset_tr = MNIST(root, train=True, download=True)
         original_dataset_te = MNIST(root, train=False, download=True)
         original_images = torch.cat((original_dataset_tr.data,
@@ -379,8 +341,7 @@ class RotatedColoredMNIST_K(MultipleDomainDataset):
         original_images = original_images[: K * per_env]
         original_labels = original_labels[: K * per_env]
 
-        # ---- Build envs in row-major order ----
-        # idx -> (rot_idx = idx // 10, color_idx = idx % 10)
+        # Build environments in row-major order.
         env_names = []
         self.datasets = []
         for idx in range(K):
@@ -397,9 +358,7 @@ class RotatedColoredMNIST_K(MultipleDomainDataset):
         self.input_shape = (2, 28, 28,)
         self.num_classes = 2
 
-    # ------------------------------------------------------------------
-    # Env construction: rotate first (on grayscale), then color
-    # ------------------------------------------------------------------
+    # Rotate grayscale images before applying color.
     def _make_env(self, images, labels, angle, p_color):
         rotated = self._rotate_images(images, angle)  # float [N, 28, 28], in [0,255]
 
@@ -415,9 +374,7 @@ class RotatedColoredMNIST_K(MultipleDomainDataset):
         return TensorDataset(x, y)
 
     def _rotate_images(self, images, angle):
-        """Rotate [N, 28, 28] uint8 tensor by `angle` degrees. Returns float
-        tensor [N, 28, 28] in [0, 255] range; downstream div_(255.0) in
-        _make_env produces values in [0, 1]."""
+        """Rotate an MNIST batch and preserve its 0-255 scale."""
         if angle == 0.0:
             return images.float()
         rotation = transforms.Compose([

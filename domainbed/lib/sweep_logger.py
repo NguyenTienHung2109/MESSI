@@ -1,20 +1,8 @@
-"""
-sweep_logger.py — Per-run structured logging for the GMoE expert sweep.
-
-Written to {log_dir}/ :
-  hparams.json        — hyperparams + compute-cost fields (written at run start)
-  run_meta.json       — environment / timing metadata (written at start; finalised at end)
-  train_log.jsonl     — per-step training metrics (appended every log_freq steps)
-  eval_log.jsonl      — per-checkpoint eval metrics (appended every checkpoint_freq steps)
-  expert_stats.jsonl  — MoE-specific diagnostics per checkpoint
-  final_summary.json  — aggregated results (written at run end)
-"""
+"""Structured per-run sweep logging."""
 
 import json
 import os
-import platform
 import re
-import subprocess
 import time
 from datetime import datetime, timezone
 
@@ -44,7 +32,6 @@ def _get_env_info():
     import sys
     info = {
         "python_version": sys.version.split()[0],
-        "hostname": platform.node(),
     }
     try:
         import torch
@@ -60,24 +47,6 @@ def _get_env_info():
     except ImportError:
         pass
     return info
-
-
-def _get_git_info():
-    git = {}
-    try:
-        git["commit_hash"] = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
-        ).decode().strip()
-        git["branch"] = subprocess.check_output(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"], stderr=subprocess.DEVNULL
-        ).decode().strip()
-        dirty_out = subprocess.check_output(
-            ["git", "status", "--porcelain"], stderr=subprocess.DEVNULL
-        ).decode().strip()
-        git["dirty"] = len(dirty_out) > 0
-    except Exception:
-        git = {"commit_hash": None, "branch": None, "dirty": None}
-    return git
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +184,6 @@ class SweepLogger:
             "exit_code":   None,
             "error_message": None,
             "environment": _get_env_info(),
-            "git":         _get_git_info(),
         }
         _atomic_write(self.run_meta_path, doc)
 
@@ -407,6 +375,5 @@ class SweepLogger:
             "exit_code":     exit_code,
             "error_message": error_message,
             "environment":   _get_env_info(),
-            "git":           _get_git_info(),
         }
         _atomic_write(self.run_meta_path, doc)

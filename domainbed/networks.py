@@ -120,10 +120,7 @@ class ResNet(torch.nn.Module):
 
 class MNIST_CNN(nn.Module):
     """
-    Hand-tuned architecture for MNIST.
-    Weirdness I've noticed so far with this architecture:
-    - adding a linear layer after the mean-pool in features hurts
-        RotatedMNIST-100 generalization severely.
+    Hand-tuned MNIST architecture without a post-pooling linear layer.
     """
     n_outputs = 128
 
@@ -209,7 +206,7 @@ class ViTFeaturizer(nn.Module):
         self.hparams = hparams or {}
 
     def forward(self, x):
-        # Inputs are (B,3,224,224) for our DG datasets; ViT.forward returns CLS embedding
+        # ViT inputs are [B, 3, 224, 224] and outputs are CLS embeddings.
         # because num_classes=0 makes self.head an Identity.
         return self.network(x)
 

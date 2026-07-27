@@ -84,25 +84,7 @@ class TestCollectResults(unittest.TestCase):
         pass # TODO
 
     def test_end_to_end(self):
-        """
-        Test that collect_results.py's output matches a manually-verified 
-        ground-truth when run on a given directory of test sweep data.
-
-        If you make any changes to the output of collect_results.py, you'll need
-        to update the ground-truth and manually verify that it's still
-        correct. The command used to update the ground-truth is:
-
-        python -m domainbed.scripts.collect_results --input_dir=domainbed/misc/test_sweep_data \
-            | tee domainbed/misc/test_sweep_results.txt
-
-        Furthermore, if you make any changes to the data format, you'll also
-        need to rerun the test sweep. The command used to run the test sweep is:
-
-        python -m domainbed.scripts.sweep launch --data_dir=$DATA_DIR \
-          --output_dir=domainbed/misc/test_sweep_data --algorithms ERM \
-          --datasets VLCS --steps 1001  --n_hparams 2 --n_trials 2 \
-          --command_launcher local
-        """
+        """Compare result collection against the verified test fixture."""
         result = subprocess.run('python -m domainbed.scripts.collect_results'
             ' --input_dir=domainbed/misc/test_sweep_data', shell=True,
             stdout=subprocess.PIPE)

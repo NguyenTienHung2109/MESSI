@@ -184,67 +184,7 @@ class ERM(Algorithm):
         return self.network(x)
 
 class ERM_CIRL(ERM):
-    """
-    ERM + CIRL causal-feature objectives.
-
-    Architecture is identical to standard ERM:
-        featurizer (ResNet / ViT / MLP)  ->  Linear classifier
-    plus three CIRL-specific train-time additions:
-
-        * a parallel `classifier_ad` head trained on the masked-out
-          (non-causal) feature subset
-        * a `Masker` that learns a soft top-k mask over feature dims
-        * a Fourier amplitude mix done on-the-fly on the GPU
-
-    Pipeline (per minibatch):
-
-        1. Build a doubled batch
-               x_full = [x_orig, x_aug]
-           where x_aug is a Fourier amplitude mix of x_orig with random
-           partners — same labels, perturbed style.
-
-        2. Forward both halves through the featurizer:
-               f = featurizer(x_full)        # (2B, D)
-
-        3. The Masker M predicts a soft k-hot mask over f's D dims:
-               f_sup = f * mask              # causal subset
-               f_inf = f * (1 - mask)        # non-causal subset
-           and feeds them through two parallel linear classifiers:
-               classifier      -> L_cls_sup
-               classifier_ad   -> L_cls_inf
-
-        4. **Step 1** updates featurizer + both classifiers with
-                L = 0.5 * (L_cls_sup + L_cls_inf)
-                  + lambda_const * factorization_loss(f_orig, f_aug)
-           (mask is .detach()'d here.)
-
-        5. **Step 2** updates the masker only, with
-                L_mask = 0.5 * L_cls_sup - 0.5 * L_cls_inf
-           This pushes the masker to pick the dimensions that are most
-           predictive (low L_cls_sup) while making the complementary
-           subset *un*predictive (high L_cls_inf).
-
-    For the first `cirl_warmup_epoch` epochs the mask is held at all-ones
-    (no split), letting the encoder reach a sane init before the
-    adversarial game begins. The factorization weight is also ramped up
-    over the same window via sigmoid_rampup.
-
-    Hyperparameters (registered in hparams_registry.py):
-        cirl_alpha          (float, default 1.0)  -- Fourier mix strength
-        cirl_ratio          (float, default 1.0)  -- Fourier mix spectrum crop
-        cirl_k              (int,   default None) -- masker top-k; default 60% of feature dim
-        cirl_lam_const      (float, default 5.0)  -- factorization weight (post-warmup)
-        cirl_off_diag       (float, default 5e-3) -- Barlow-Twins lambda
-        cirl_warmup_epoch   (int,   default 5)    -- warmup epochs (mask held at 1)
-        cirl_warmup_total   (int,   default 5)    -- sigmoid ramp-up length
-        cirl_masker_lr      (float, default None) -- separate LR for the masker; falls back to lr
-        cirl_steps_per_epoch(int,   default 100)  -- approx. steps/epoch (drives warmup)
-
-    At eval time only the featurizer + main `classifier` are used -- no
-    mask, no Fourier mix. `predict()` is overridden to call the
-    featurizer + classifier directly (skipping the original ERM
-    `nn.Sequential` wrapper that would route through both pieces).
-    """
+    """ERM with CIRL feature masking, Fourier mixing, and factorization."""
 
     def __init__(self, input_shape, num_classes, num_domains, hparams):
 

@@ -79,7 +79,7 @@ class Evaluator:
             self.set_target_env(target_env)
 
     def set_target_env(self, target_env):
-        """When len(test_envs) == 2, you can specify target env for computing exact test acc."""
+        """Select a target environment when exactly two test environments exist."""
         self.test_envs = [target_env]
 
     def evaluate(self, algorithm, ret_losses=False):

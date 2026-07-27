@@ -1,10 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 
-"""
-A command launcher launches a list of commands on a cluster; implement your own
-launcher to add support for your cluster. We've provided an example launcher
-which runs all commands serially on the local machine.
-"""
+"""Command launchers for local and cluster execution."""
 import os
 import subprocess
 import time

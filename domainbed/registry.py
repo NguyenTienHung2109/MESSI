@@ -1,5 +1,6 @@
-""" Model Registry
-Hacked together by / Copyright 2020 Ross Wightman
+"""Model registry.
+
+Copyright 2020 Ross Wightman.
 """
 
 import sys

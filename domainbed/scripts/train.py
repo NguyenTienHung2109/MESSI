@@ -9,6 +9,8 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+os.environ.setdefault('WANDB_DISABLE_GIT', 'true')
+os.environ.setdefault('WANDB_DISABLE_CODE', 'true')
 
 import wandb
 import PIL
@@ -17,9 +19,7 @@ import torch
 import torch.utils.data
 import torchvision
 
-# Patch Tutel CUDA kernels with pure-PyTorch fallbacks BEFORE importing
-# vision_transformer / algorithms (which import tutel at module level).
-# Required when Tutel's compiled extensions don't support the current GPU.
+# Install routing fallbacks before importing Tutel-backed modules.
 import domainbed.tutel_patch  # noqa: F401
 
 from domainbed import algorithms
@@ -66,8 +66,7 @@ if __name__ == "__main__":
                         help='Human-readable run ID for sweep logging (e.g. gmoe_N6_K2_PR00).')
     args = parser.parse_args()
 
-    # If we ever want to implement checkpointing, just persist these values
-    # every once in a while, and then load them from disk here.
+    # Checkpoint state would include these values.
     start_step = 0
     algorithm_dict = None
 
@@ -126,9 +125,7 @@ if __name__ == "__main__":
         raise NotImplementedError
 
 
-    # W&B logging is opt-in and fully env-driven. To enable, set
-    # WANDB_PROJECT (and optionally WANDB_ENTITY); authentication is read from
-    # the standard WANDB_API_KEY env var or ~/.netrc.
+    # Enable W&B by setting WANDB_PROJECT and, optionally, WANDB_ENTITY.
     wandb_enabled = (
         'Debug' not in args.dataset
         and os.environ.get('WANDB_DISABLED', '0') != '1'
@@ -153,6 +150,11 @@ if __name__ == "__main__":
             project=os.environ['WANDB_PROJECT'],
             entity=os.environ.get('WANDB_ENTITY'),
             name=run_name,
+            settings=wandb.Settings(
+                start_method='thread',
+                x_disable_meta=True,
+                x_disable_stats=True,
+            ),
             config={
                 'dataset': args.dataset,
                 'algorithm': args.algorithm,
@@ -163,22 +165,13 @@ if __name__ == "__main__":
                 'hparams_seed': args.hparams_seed,
                 **{f'hp/{k}': hparams[k] for k in sorted(relevant_keys)},
             },
-            settings=wandb.Settings(start_method='thread'),
         )
 
 
-    # Split each env into an 'in-split' and an 'out-split'. We'll train on
-    # each in-split except the test envs, and evaluate on all splits.
+    # Split each environment into training and validation subsets.
 
-    # To allow unsupervised domain adaptation experiments, we split each test
-    # env into 'in-split', 'uda-split' and 'out-split'. The 'in-split' is used
-    # by collect_results.py to compute classification accuracies.  The
-    # 'out-split' is used by the Oracle model selectino method. The unlabeled
-    # samples in 'uda-split' are passed to the algorithm at training time if
-    # args.task == "domain_adaptation". If we are interested in comparing
-    # domain generalization and domain adaptation results, then domain
-    # generalization algorithms should create the same 'uda-splits', which will
-    # be discared at training.
+    # Split test environments into labeled, unlabeled, and validation subsets.
+    # Unlabeled subsets are passed only for domain-adaptation tasks.
     in_splits = []
     out_splits = []
     uda_splits = []

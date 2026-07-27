@@ -240,9 +240,7 @@ class Tee:
 
 
 class ParamDict(OrderedDict):
-    """Code adapted from https://github.com/Alok/rl_implementations/tree/master/reptile.
-    A dictionary where the values are Tensors, meant to represent weights of
-    a model. This subclass lets you perform arithmetic on weights directly."""
+    """Tensor-valued dictionary supporting weight arithmetic."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, *kwargs)

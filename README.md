@@ -28,7 +28,7 @@ python -m domainbed.scripts.train \
     --algorithm MESSI \
     --dataset PACS \
     --test_envs 0 \
-    --data_dir /path/to/datasets/PACS \
+    --data_dir /path/to/datasets/ \
     --output_dir /path/to/output
 ```
 
@@ -39,6 +39,6 @@ Evaluate a checkpoint on one complete environment:
 ```sh
 python -m domainbed.scripts.eval \
     --env 0 \
-    --dir_dataset /path/to/datasets/PACS \
+    --dir_dataset /path/to/datasets/ \
     --dir_ckpt /path/to/model.pt
 ```

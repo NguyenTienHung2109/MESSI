@@ -1,26 +1,7 @@
-""" Vision Transformer (ViT) in PyTorch
+"""Vision Transformer and DeiT implementations.
 
-A PyTorch implement of Vision Transformers as described in:
-
-'An Image Is Worth 16 x 16 Words: Transformers for Image Recognition at Scale'
-    - https://arxiv.org/abs/2010.11929
-
-`How to train your ViT? Data, Augmentation, and Regularization in Vision Transformers`
-    - https://arxiv.org/abs/2106.10270
-
-The official jax code is released and available at https://github.com/google-research/vision_transformer
-
-DeiT model defs and weights from https://github.com/facebookresearch/deit,
-paper `DeiT: Data-efficient Image Transformers` - https://arxiv.org/abs/2012.12877
-
-Acknowledgments:
-* The paper authors for releasing code and weights, thanks!
-* I fixed my class token impl based on Phil Wang's https://github.com/lucidrains/vit-pytorch ... check it out
-for some einops/einsum fun
-* Simple transformer style inspired by Andrej Karpathy's https://github.com/karpathy/minGPT
-* Bert reference code checks against Huggingface Transformers and Tensorflow Bert
-
-Hacked together by / Copyright 2020, Ross Wightman
+References: https://arxiv.org/abs/2010.11929 and https://arxiv.org/abs/2012.12877.
+Copyright 2020 Ross Wightman.
 """
 import logging
 import math
@@ -370,7 +351,7 @@ class Block(nn.Module):
         super().__init__()
         self.norm1 = norm_layer(dim)
         self.attn = Attention(dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop)
-        # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
+        # Apply stochastic depth.
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
         self.aux_loss = None
@@ -562,7 +543,7 @@ class VisionTransformer(nn.Module):
 
     def forward_features(self, x, domain_index=None):
         x = self.patch_embed(x)
-        cls_token = self.cls_token.expand(x.shape[0], -1, -1)  # stole cls_tokens impl from Phil Wang, thanks
+        cls_token = self.cls_token.expand(x.shape[0], -1, -1)
         if self.dist_token is None:
             x = torch.cat((cls_token, x), dim=1)
         else:
@@ -591,7 +572,7 @@ class VisionTransformer(nn.Module):
 
     def get_last_selfattention(self, x):
         x = self.patch_embed(x)
-        cls_token = self.cls_token.expand(x.shape[0], -1, -1)  # stole cls_tokens impl from Phil Wang, thanks
+        cls_token = self.cls_token.expand(x.shape[0], -1, -1)
         if self.dist_token is None:
             x = torch.cat((cls_token, x), dim=1)
         else:
@@ -606,11 +587,7 @@ class VisionTransformer(nn.Module):
 
 
 def _init_vit_weights(module: nn.Module, name: str = '', head_bias: float = 0., jax_impl: bool = False):
-    """ ViT weight initialization
-    * When called without n, head_bias, jax_impl args it will behave exactly the same
-      as my original init for compatibility with prev hparam / downstream use cases (ie DeiT).
-    * When called w/ valid n (module name) and jax_impl=True, will (hopefully) match JAX impl
-    """
+    """Initialize ViT weights, with optional JAX-compatible behavior."""
     if isinstance(module, nn.Linear):
         if name.startswith('head'):
             nn.init.zeros_(module.weight)
@@ -631,7 +608,7 @@ def _init_vit_weights(module: nn.Module, name: str = '', head_bias: float = 0., 
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
     elif jax_impl and isinstance(module, nn.Conv2d):
-        # NOTE conv was left to pytorch default in my original init
+        # Use LeCun initialization for JAX compatibility.
         lecun_normal_(module.weight)
         if module.bias is not None:
             nn.init.zeros_(module.bias)
@@ -753,7 +730,7 @@ def checkpoint_filter_fn(state_dict, model):
         state_dict = state_dict['model']
     for k, v in state_dict.items():
         if 'patch_embed.proj.weight' in k and len(v.shape) < 4:
-            # For old models that I trained prior to conv based patchification
+            # Convert legacy linear patch weights.
             O, I, H, W = model.patch_embed.proj.weight.shape
             v = v.reshape(O, -1, H, W)
         elif k == 'pos_embed' and v.shape != model.pos_embed.shape:
@@ -769,13 +746,12 @@ def _create_vision_transformer(variant, pretrained=False, default_cfg=None, **kw
     if kwargs.get('features_only', None):
         raise RuntimeError('features_only not implemented for Vision Transformer models.')
 
-    # NOTE this extra code to support handling of repr size for in21k pretrained models
+    # Handle representation size for ImageNet-21k weights.
     default_num_classes = default_cfg['num_classes']
     num_classes = kwargs.get('num_classes', default_num_classes)
     repr_size = kwargs.pop('representation_size', None)
     if repr_size is not None and num_classes != default_num_classes:
-        # Remove representation layer if fine-tuning. This may not always be the desired action,
-        # but I feel better than doing nothing by default for fine-tuning. Perhaps a better interface?
+        # Remove an incompatible representation layer during fine-tuning.
         _logger.warning("Removing representation layer for fine-tuning.")
         repr_size = None
 
@@ -828,7 +804,7 @@ def vit_small_patch32_384(pretrained=False, **kwargs):
 @register_model
 def vit_small_patch16_224(pretrained=False, **kwargs):
     """ ViT-Small (ViT-S/16)
-    NOTE I've replaced my previous 'small' model definition and weights with the small variant from the DeiT paper
+    Uses the DeiT small model definition and weights.
     """
     model_kwargs = dict(patch_size=16, embed_dim=384, depth=12, num_heads=6, **kwargs)
     model = _create_vision_transformer('vit_small_patch16_224', pretrained=pretrained, **model_kwargs)
@@ -838,7 +814,7 @@ def vit_small_patch16_224(pretrained=False, **kwargs):
 @register_model
 def vit_small_patch16_384(pretrained=False, **kwargs):
     """ ViT-Small (ViT-S/16)
-    NOTE I've replaced my previous 'small' model definition and weights with the small variant from the DeiT paper
+    Uses the DeiT small model definition and weights.
     """
     model_kwargs = dict(patch_size=16, embed_dim=384, depth=12, num_heads=6, **kwargs)
     model = _create_vision_transformer('vit_small_patch16_384', pretrained=pretrained, **model_kwargs)
