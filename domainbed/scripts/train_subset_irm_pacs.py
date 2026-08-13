@@ -291,17 +291,17 @@ def run(args):
         project=args.wandb_project,
         entity=args.wandb_entity,
         name=args.wandb_name or f"{args.run}-target-{env_names[target_env]}-seed-{seed}",
-        group=args.wandb_group or f"PACS-target-{env_names[target_env]}",
+        group=args.wandb_group,
         job_type="train",
         config=manifest,
         dir=str(output_dir),
         mode=args.wandb_mode,
         tags=["PACS", "SIRM", spec["algorithm"]],
     )
-    wandb_run.define_metric("optimizer_step")
-    wandb_run.define_metric("train/*", step_metric="optimizer_step")
-    wandb_run.define_metric("eval/*", step_metric="optimizer_step")
-    wandb_run.define_metric("diagnostics/*", step_metric="optimizer_step")
+    wandb_run.define_metric("step")
+    wandb_run.define_metric("train/*", step_metric="step")
+    wandb_run.define_metric("eval/*", step_metric="step")
+    wandb_run.define_metric("diagnostics/*", step_metric="step")
     manifest["wandb"] = {
         "entity": args.wandb_entity,
         "project": args.wandb_project,
@@ -323,6 +323,7 @@ def run(args):
             minibatches.append((x.cuda(non_blocking=True), y.cuda(non_blocking=True)))
         values = model.update(minibatches)
         wandb_metrics = {
+            "step": step,
             "optimizer_step": step + 1,
             **{
                 f"train/{key}": float(value)
@@ -357,6 +358,12 @@ def run(args):
             for env in source_envs
         }
         source_mean = float(np.mean(list(source_scores.values())))
+        source_values = np.asarray(list(source_scores.values()), dtype=float)
+        previous_wall_time = (
+            checkpoint_records[-1]["wall_time_seconds"]
+            if checkpoint_records else 0.0
+        )
+        previous_step = checkpoint_records[-1]["step"] if checkpoint_records else -1
         record = {
             "step": step,
             "optimizer_steps_completed": step + 1,
@@ -377,6 +384,18 @@ def run(args):
                 "manifest": manifest,
             })
         wandb_metrics.update({
+            "step": step,
+            "train/loss": record["loss"],
+            "train/moe_aux_loss": record["loss"] - record["loss_cls"],
+            "train/step_time": (
+                (record["wall_time_seconds"] - previous_wall_time)
+                / max(step - previous_step, 1)
+            ),
+            "train/mem_gb": record["peak_gpu_memory_gb"],
+            "eval/val_avg_acc": source_mean,
+            "eval/val_worst_domain_acc": float(source_values.min()),
+            "eval/val_best_domain_acc": float(source_values.max()),
+            "eval/val_std_acc": float(source_values.std()),
             **{f"eval/{key}": value for key, value in eval_scores.items()},
             "eval/source_val_accuracy": source_mean,
             "system/peak_gpu_memory_gb": record["peak_gpu_memory_gb"],
@@ -384,6 +403,9 @@ def run(args):
         })
         for env, value in source_scores.items():
             wandb_metrics[f"eval/source_val_env{env}"] = value
+        for key, value in eval_scores.items():
+            split = "in" if "_in_acc" in key else "out"
+            wandb_metrics[f"eval/{split}/{key}"] = value
         wandb_run.log(wandb_metrics)
         window = collections.defaultdict(list)
         print(json.dumps({"run": args.run, **record}, sort_keys=True), flush=True)
