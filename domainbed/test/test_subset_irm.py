@@ -410,6 +410,63 @@ class TestSubsetIRMPenalty(unittest.TestCase):
 
 @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")
 class TestMESSIIntegration(unittest.TestCase):
+    def test_encoder_classifier_skip_adds_to_top2_moe_logits(self):
+        hparams = {
+            "model": "deit_tiny_patch16_224",
+            "pretrained": False,
+            "legacy_non_distilled_deit": False,
+            "moe_dim": "auto",
+            "num_experts": 6,
+            "expert_mlp_ratio": 2,
+            "lr": 3e-5,
+            "weight_decay": 1e-6,
+            "lambda_inv": 0.0,
+            "lambda_sp": 0.0,
+            "lambda_bal": 0.0,
+            "lambda_div": 0.0,
+            "alpha": 4.0,
+            "subset_irm_enabled": True,
+            "subset_irm_prediction_mode": "expert_logit_mix",
+            "subset_irm_router_topk": 2,
+            "subset_irm_topk_warmup_steps": 0,
+            "subset_irm_use_expert_heads": True,
+            "subset_irm_encoder_skip_enabled": True,
+            "subset_irm_encoder_skip_scale": 0.75,
+            "subset_irm_lambda_expert": 0.0,
+            "subset_irm_lambda_route": 0.0,
+            "subset_irm_lambda_sirm": 0.0,
+        }
+        model = MESSISubsetIRM((3, 224, 224), 7, 3, hparams).eval()
+        torch.testing.assert_close(
+            model.encoder_skip_classifier.weight,
+            model.moe_head.classifier.weight,
+        )
+        torch.testing.assert_close(
+            model.encoder_skip_classifier.bias,
+            model.moe_head.classifier.bias,
+        )
+
+        x = torch.randn(2, 3, 224, 224, device="cuda")
+        output = model._subset_forward(x)
+        logits, gamma, moe_logits, skip_logits = (
+            output[0], output[2], output[6], output[7]
+        )
+        torch.testing.assert_close(
+            logits, moe_logits + 0.75 * skip_logits
+        )
+        torch.testing.assert_close(
+            gamma.gt(0).sum(dim=1),
+            torch.full((2,), 2, device="cuda"),
+        )
+        F.cross_entropy(logits, torch.tensor([0, 1], device="cuda")).backward()
+        self.assertGreater(
+            model.encoder_skip_classifier.weight.grad.abs().sum().item(), 0
+        )
+
+        model.encoder_skip_enabled = False
+        without_skip = model._subset_forward(x)
+        torch.testing.assert_close(without_skip[0], without_skip[6])
+
     def test_loss_schedule_changes_only_at_configured_steps(self):
         hparams = {
             "model": "deit_tiny_patch16_224",

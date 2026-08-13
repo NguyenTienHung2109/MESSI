@@ -256,8 +256,8 @@ if __name__ == "__main__":
             run_name = run_name[:125] + '...'
 
         wandb.init(
-            project='messi',
-            entity='hunghn2003',
+            project=os.environ.get('WANDB_PROJECT', 'PACS_sweep'),
+            entity=os.environ.get('WANDB_ENTITY', 'hunghn2003'),
             name=run_name,
             config={
                 'dataset': args.dataset,

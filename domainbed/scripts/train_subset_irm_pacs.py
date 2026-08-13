@@ -4,6 +4,7 @@ import argparse
 import collections
 import hashlib
 import json
+import os
 import random
 import time
 from pathlib import Path
@@ -13,6 +14,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import wandb
 from torch.utils.data import DataLoader, Subset
 
 from domainbed import algorithms, datasets
@@ -284,6 +286,29 @@ def run(args):
         "target_used_for_checkpoint_selection": False,
         "selection": "argmax mean source out-split accuracy",
     }
+
+    wandb_run = wandb.init(
+        project=args.wandb_project,
+        entity=args.wandb_entity,
+        name=args.wandb_name or f"{args.run}-target-{env_names[target_env]}-seed-{seed}",
+        group=args.wandb_group or f"PACS-target-{env_names[target_env]}",
+        job_type="train",
+        config=manifest,
+        dir=str(output_dir),
+        mode=args.wandb_mode,
+        tags=["PACS", "SIRM", spec["algorithm"]],
+    )
+    wandb_run.define_metric("optimizer_step")
+    wandb_run.define_metric("train/*", step_metric="optimizer_step")
+    wandb_run.define_metric("eval/*", step_metric="optimizer_step")
+    wandb_run.define_metric("diagnostics/*", step_metric="optimizer_step")
+    manifest["wandb"] = {
+        "entity": args.wandb_entity,
+        "project": args.wandb_project,
+        "mode": args.wandb_mode,
+        "run_id": wandb_run.id,
+        "run_url": wandb_run.url,
+    }
     write_json(output_dir / "manifest.json", manifest)
 
     best_source = -1.0
@@ -297,6 +322,14 @@ def run(args):
             x, y = next(iterator)
             minibatches.append((x.cuda(non_blocking=True), y.cuda(non_blocking=True)))
         values = model.update(minibatches)
+        wandb_metrics = {
+            "optimizer_step": step + 1,
+            **{
+                f"train/{key}": float(value)
+                for key, value in values.items()
+                if isinstance(value, (int, float))
+            },
+        }
         for key, value in values.items():
             if isinstance(value, (int, float)):
                 window[key].append(float(value))
@@ -305,7 +338,13 @@ def run(args):
             append_jsonl(output_dir / "diagnostics.jsonl", {
                 "step": step, **values, **model.last_diagnostics
             })
+            wandb_metrics.update({
+                f"diagnostics/{key}": float(value)
+                for key, value in model.last_diagnostics.items()
+                if isinstance(value, (int, float, bool))
+            })
         if step % checkpoint_freq != 0 and step != steps - 1:
+            wandb_run.log(wandb_metrics)
             continue
         eval_scores = {
             f"{name}_acc": accuracy(
@@ -337,6 +376,15 @@ def run(args):
                 "step": step, "source_val_accuracy": source_mean,
                 "manifest": manifest,
             })
+        wandb_metrics.update({
+            **{f"eval/{key}": value for key, value in eval_scores.items()},
+            "eval/source_val_accuracy": source_mean,
+            "system/peak_gpu_memory_gb": record["peak_gpu_memory_gb"],
+            "system/wall_time_seconds": record["wall_time_seconds"],
+        })
+        for env, value in source_scores.items():
+            wandb_metrics[f"eval/source_val_env{env}"] = value
+        wandb_run.log(wandb_metrics)
         window = collections.defaultdict(list)
         print(json.dumps({"run": args.run, **record}, sort_keys=True), flush=True)
 
@@ -378,6 +426,10 @@ def run(args):
     summary = {
         "run": args.run,
         "prediction_mode": hparams["subset_irm_prediction_mode"],
+        "encoder_skip_enabled": hparams.get(
+            "subset_irm_encoder_skip_enabled", False
+        ),
+        "encoder_skip_scale": hparams.get("subset_irm_encoder_skip_scale", 1.0),
         "topk": hparams["subset_irm_router_topk"],
         "lambda_expert": hparams["subset_irm_lambda_expert"],
         "lambda_route": hparams["subset_irm_lambda_route"],
@@ -412,7 +464,19 @@ def run(args):
             checkpoint_records, target_env
         ))
     write_json(output_dir / "summary.json", summary)
+    wandb_run.summary.update(summary)
+    wandb_run.summary["best_source_val_accuracy"] = best_source
+    wandb_run.summary["best_source_val_step"] = best_step
+    for filename in (
+            "manifest.json", "train_log.jsonl", "diagnostics.jsonl",
+            "source_selected_diagnostics.json", "R_heatmap.png",
+            "Q_heatmap.png", "summary.json"):
+        path = output_dir / filename
+        if path.exists():
+            wandb_run.save(str(path), base_path=str(output_dir), policy="now")
     print(json.dumps(summary, sort_keys=True), flush=True)
+    print(f"W&B run: {wandb_run.url}", flush=True)
+    wandb_run.finish()
 
 
 def main():
@@ -425,6 +489,19 @@ def main():
     parser.add_argument("--checkpoint-freq", type=int)
     parser.add_argument("--target-env", type=int, choices=range(4))
     parser.add_argument("--skip-target-eval", action="store_true")
+    parser.add_argument(
+        "--wandb-project", default=os.environ.get("WANDB_PROJECT", "PACS_sweep")
+    )
+    parser.add_argument(
+        "--wandb-entity", default=os.environ.get("WANDB_ENTITY", "hunghn2003")
+    )
+    parser.add_argument("--wandb-name")
+    parser.add_argument("--wandb-group")
+    parser.add_argument(
+        "--wandb-mode",
+        choices=("online", "offline", "disabled"),
+        default=os.environ.get("WANDB_MODE", "online"),
+    )
     args = parser.parse_args()
     run(args)
 

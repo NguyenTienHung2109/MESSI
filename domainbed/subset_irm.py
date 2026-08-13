@@ -5,8 +5,8 @@ module provides a separately selected algorithm plus small, independently
 testable mathematical building blocks.
 """
 
+import math
 from collections import OrderedDict
-from itertools import chain
 
 import torch
 import torch.nn as nn
@@ -474,6 +474,19 @@ class MESSISubsetIRM(algorithms.MESSI):
         self.use_expert_heads = bool(hparams.get(
             "subset_irm_use_expert_heads", self.subset_enabled
         ))
+        self.encoder_skip_enabled = bool(hparams.get(
+            "subset_irm_encoder_skip_enabled", False
+        ))
+        self.encoder_skip_scale = float(hparams.get(
+            "subset_irm_encoder_skip_scale", 1.0
+        ))
+        if not math.isfinite(self.encoder_skip_scale):
+            raise ValueError("subset_irm_encoder_skip_scale must be finite")
+        if (self.encoder_skip_enabled and
+                self.prediction_mode != "expert_logit_mix"):
+            raise ValueError(
+                "encoder logit skip requires expert_logit_mix prediction mode"
+            )
         self.lambda_expert = float(hparams.get("subset_irm_lambda_expert", 0.0))
         self.lambda_route = float(hparams.get("subset_irm_lambda_route", 0.0))
         self.lambda_sirm = float(hparams.get("subset_irm_lambda_sirm", 0.0))
@@ -567,6 +580,16 @@ class MESSISubsetIRM(algorithms.MESSI):
             self.num_experts, self.moe_head.expert_dim, self.num_classes,
             shared_classifier=self.moe_head.classifier,
         ).to(next(self.moe_head.parameters()).device)
+        if self.encoder_skip_enabled:
+            self.encoder_skip_classifier = nn.Linear(
+                self.featurizer.n_outputs, self.num_classes
+            ).to(next(self.moe_head.parameters()).device)
+            with torch.no_grad():
+                shared = self.moe_head.classifier
+                if shared.weight.shape == self.encoder_skip_classifier.weight.shape:
+                    self.encoder_skip_classifier.weight.copy_(shared.weight)
+                    if shared.bias is not None:
+                        self.encoder_skip_classifier.bias.copy_(shared.bias)
         self.risk_ema = SourceRiskEMA(
             num_domains, self.num_experts,
             beta=float(hparams.get("subset_irm_assignment_ema", 0.9)),
@@ -577,10 +600,15 @@ class MESSISubsetIRM(algorithms.MESSI):
         ))
         self.register_buffer("sirm_active_steps", torch.zeros((), dtype=torch.long))
 
-        trainable = [p for p in chain(
-            self.featurizer.parameters(), self.moe_head.parameters(),
-            self.expert_heads.parameters()
-        ) if p.requires_grad]
+        trainable_modules = [self.featurizer, self.moe_head, self.expert_heads]
+        if self.encoder_skip_enabled:
+            trainable_modules.append(self.encoder_skip_classifier)
+        trainable = [
+            parameter
+            for module in trainable_modules
+            for parameter in module.parameters()
+            if parameter.requires_grad
+        ]
         self.optimizer = torch.optim.Adam(
             trainable,
             lr=hparams.get("lr", 0.0),
@@ -605,15 +633,21 @@ class MESSISubsetIRM(algorithms.MESSI):
         shared_logits = self.moe_head.classifier(shared_features)
         expert_logits = self.expert_heads(h_stack)
         if self.prediction_mode == "expert_logit_mix":
-            logits = (gamma.unsqueeze(-1) * expert_logits).sum(dim=1)
+            moe_logits = (gamma.unsqueeze(-1) * expert_logits).sum(dim=1)
         else:
-            logits = shared_logits
-        return logits, dense_pi, gamma, h_stack, expert_logits, shared_logits
+            moe_logits = shared_logits
+        if self.encoder_skip_enabled:
+            encoder_skip_logits = self.encoder_skip_classifier(z)
+        else:
+            encoder_skip_logits = torch.zeros_like(moe_logits)
+        logits = moe_logits + self.encoder_skip_scale * encoder_skip_logits
+        return (logits, dense_pi, gamma, h_stack, expert_logits, shared_logits,
+                moe_logits, encoder_skip_logits)
 
     def _forward(self, x):
         if not self.subset_enabled:
             return super()._forward(x)
-        logits, dense_pi, _, h_stack, _, _ = self._subset_forward(x)
+        logits, dense_pi, _, h_stack, _, _, _, _ = self._subset_forward(x)
         return logits, dense_pi, h_stack
 
     def _probe_risk(self, expert_logits, targets, domain_ids):
@@ -654,6 +688,10 @@ class MESSISubsetIRM(algorithms.MESSI):
             ("experts", list(self.moe_head.experts.parameters())),
             ("expert_heads", list(self.expert_heads.parameters())),
         ])
+        if self.encoder_skip_enabled:
+            groups["encoder_skip_classifier"] = list(
+                self.encoder_skip_classifier.parameters()
+            )
         result = {}
         for loss_name, loss in losses.items():
             for group_name, parameters in groups.items():
@@ -669,7 +707,7 @@ class MESSISubsetIRM(algorithms.MESSI):
         all_y = torch.cat([y for _, y in minibatches])
         domain_ids = self._get_domain_ids(minibatches)
         (logits, dense_pi, gamma, h_stack, expert_logits,
-         _) = self._subset_forward(all_x)
+         _, moe_logits, encoder_skip_logits) = self._subset_forward(all_x)
 
         l_cls = F.cross_entropy(logits, all_y)
         l_expert = expert_predictive_loss(
@@ -848,17 +886,18 @@ class MESSISubsetIRM(algorithms.MESSI):
         self.optimizer.zero_grad(set_to_none=True)
         total.backward()
         total_grad_sq = total.new_zeros(())
-        for parameter in chain(
-                self.featurizer.parameters(), self.moe_head.parameters(),
-                self.expert_heads.parameters()):
+        optimizer_parameters = [
+            parameter
+            for group in self.optimizer.param_groups
+            for parameter in group["params"]
+        ]
+        for parameter in optimizer_parameters:
             if parameter.grad is not None:
                 total_grad_sq += parameter.grad.detach().float().square().sum()
         total_grad_norm = float(total_grad_sq.sqrt().item())
         finite_gradients = all(
             parameter.grad is None or bool(torch.isfinite(parameter.grad).all())
-            for parameter in chain(
-                self.featurizer.parameters(), self.moe_head.parameters(),
-                self.expert_heads.parameters())
+            for parameter in optimizer_parameters
         )
         if not bool(torch.isfinite(total)) or not finite_gradients:
             raise FloatingPointError(f"non-finite Subset-IRM update at step {step}")
@@ -886,6 +925,19 @@ class MESSISubsetIRM(algorithms.MESSI):
             ].cpu().tolist(),
             "expert_load": load.detach().cpu().tolist(),
             "per_expert_accuracy": expert_acc,
+            "encoder_skip_enabled": self.encoder_skip_enabled,
+            "encoder_skip_scale": self.encoder_skip_scale,
+            "moe_logit_norm": float(
+                moe_logits.detach().float().norm(dim=1).mean().item()
+            ),
+            "encoder_skip_logit_norm": float(
+                encoder_skip_logits.detach().float().norm(dim=1).mean().item()
+            ),
+            "skip_to_moe_logit_norm_ratio": float(
+                self.encoder_skip_scale
+                * encoder_skip_logits.detach().float().norm(dim=1).mean().item()
+                / max(moe_logits.detach().float().norm(dim=1).mean().item(), EPS)
+            ),
             "ssi_mode": self.ssi_mode,
             "ssi_active": float(ssi_info["active"]),
             "ssi_active_pair_count": int(ssi_info["active_pair_count"]),

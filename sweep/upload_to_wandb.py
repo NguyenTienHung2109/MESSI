@@ -127,8 +127,8 @@ def main():
                         help="Which test environment index to upload (default: 3)")
     parser.add_argument("--project", default="PACS_sweep",
                         help="W&B project name")
-    parser.add_argument("--entity", default=None,
-                        help="W&B entity (team/user). Leave blank to use default.")
+    parser.add_argument("--entity", default="hunghn2003",
+                        help="W&B entity (team/user).")
     args = parser.parse_args()
 
     logs_dir = Path(args.logs_dir)

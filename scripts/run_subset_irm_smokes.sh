@@ -2,9 +2,11 @@
 set -eo pipefail
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate gmoe
+conda activate "${CONDA_ENV:-dg}"
 set -u
-export WANDB_MODE=disabled
+export WANDB_PROJECT="${WANDB_PROJECT:-PACS_sweep}"
+export WANDB_ENTITY="${WANDB_ENTITY:-hunghn2003}"
+export WANDB_MODE="${WANDB_MODE:-online}"
 export CUDA_VISIBLE_DEVICES=0
 
 CONFIG="configs/subset_irm_pacs.json"

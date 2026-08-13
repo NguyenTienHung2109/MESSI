@@ -115,6 +115,35 @@ python3 -m domainbed.scripts.train\
        --test_env 2
 ```
 
+### SIRM on PACS with W&B
+
+SIRM runs use the `dg` conda environment and sync online by default to
+[`hunghn2003/PACS_sweep`](https://wandb.ai/hunghn2003/PACS_sweep):
+
+```sh
+bash scripts/run_subset_irm_pacs.sh SIRMCurrent
+```
+
+The encoder-logit skip variant uses
+`logits = C0(z0) + sum_m gamma_m C_m(h_m)` and can be run with:
+
+```sh
+bash scripts/run_subset_irm_pacs.sh SIRMCurrentSkipLogit
+```
+
+The Python entry point has the same defaults:
+
+```sh
+conda run -n dg python -m domainbed.scripts.train_subset_irm_pacs \
+  --config configs/subset_irm_pacs.json \
+  --data-dir ./domainbed/data \
+  --run SIRMCurrent \
+  --output-dir subset_irm_outputs/full/SIRMCurrent
+```
+
+Override `WANDB_PROJECT`, `WANDB_ENTITY`, or `WANDB_MODE` when needed. For
+example, `WANDB_MODE=offline` records a run locally for later synchronization.
+
 ## Hyper-params
 
 We put hparams for each dataset into

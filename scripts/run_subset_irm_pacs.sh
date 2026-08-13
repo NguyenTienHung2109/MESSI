@@ -2,8 +2,12 @@
 set -eo pipefail
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate gmoe
+conda activate "${CONDA_ENV:-dg}"
 set -u
+
+export WANDB_PROJECT="${WANDB_PROJECT:-PACS_sweep}"
+export WANDB_ENTITY="${WANDB_ENTITY:-hunghn2003}"
+export WANDB_MODE="${WANDB_MODE:-online}"
 
 CONFIG="${CONFIG:-configs/subset_irm_pacs.json}"
 DATA_DIR="${DATA_DIR:-./domainbed/data}"
@@ -34,7 +38,7 @@ for run in "${RUNS[@]}"; do
     echo "refusing non-empty/incomplete output: ${out}" >&2
     exit 1
   fi
-  CUDA_VISIBLE_DEVICES=0 WANDB_MODE=disabled \
+  CUDA_VISIBLE_DEVICES=0 \
     python -m domainbed.scripts.train_subset_irm_pacs \
       --config "$CONFIG" --data-dir "$DATA_DIR" \
       --run "$run" --output-dir "$out"
