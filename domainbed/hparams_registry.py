@@ -248,6 +248,34 @@ def _hparams(algorithm, dataset, random_seed):
         _hparam('ot_epsilon',         0.1,                      lambda r: 0.1)
         _hparam('sinkhorn_iters',     50,                       lambda r: 50)
 
+    if algorithm == 'MESSI_SubsetIRM':
+        # Explicit opt-in surface. Every new coefficient is zero by default;
+        # the legacy MESSI coefficients retain their established defaults.
+        _hparam('model',              'deit_small_patch16_224', lambda r: 'deit_small_patch16_224')
+        _hparam('moe_dim',            'auto',                   lambda r: 'auto')
+        _hparam('num_experts',        6,                        lambda r: 6)
+        _hparam('lambda_inv',         0.1,                      lambda r: 0.1)
+        _hparam('lambda_sp',          0.01,                     lambda r: 0.01)
+        _hparam('lambda_bal',         0.01,                     lambda r: 0.01)
+        _hparam('lambda_div',         0.01,                     lambda r: 0.01)
+        _hparam('alpha',              4.0,                      lambda r: 4.0)
+        _hparam('subset_irm_enabled', False,                    lambda r: False)
+        _hparam('subset_irm_prediction_mode', 'shared_feature_mix', lambda r: 'shared_feature_mix')
+        _hparam('subset_irm_router_topk', None,                  lambda r: None)
+        _hparam('subset_irm_topk_warmup_steps', 0,              lambda r: 0)
+        _hparam('subset_irm_use_expert_heads', False,           lambda r: False)
+        _hparam('subset_irm_lambda_expert', 0.0,                 lambda r: 0.0)
+        _hparam('subset_irm_lambda_route', 0.0,                  lambda r: 0.0)
+        _hparam('subset_irm_lambda_sirm', 0.0,                   lambda r: 0.0)
+        _hparam('subset_irm_responsibility_detach', True,       lambda r: True)
+        _hparam('subset_irm_assignment_mode', 'risk_ema',       lambda r: 'risk_ema')
+        _hparam('subset_irm_assignment_topr', 2,                lambda r: 2)
+        _hparam('subset_irm_assignment_temperature', 1.0,       lambda r: 1.0)
+        _hparam('subset_irm_assignment_ema', 0.9,               lambda r: 0.9)
+        _hparam('subset_irm_probe_interval', 100,                lambda r: 100)
+        _hparam('subset_irm_min_effective_samples', 2,          lambda r: 2)
+        _hparam('subset_irm_sirm_anneal_steps', 0,              lambda r: 0)
+
     if algorithm == 'rMESSI_InvOT':
         _hparam('model',              'deit_small_patch16_224', lambda r: 'deit_small_patch16_224')
         _hparam('moe_dim',            'auto',                   lambda r: 'auto')

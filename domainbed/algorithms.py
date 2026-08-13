@@ -68,6 +68,9 @@ ALGORITHMS = [
     'GMOE_InvB',
     'GMOE_Full',
     'GMOE_InvMMD',
+    'MESSI',
+    'MESSI_MMD',
+    'MESSI_SubsetIRM',
     'GMOE_InvOT',
     'rMESSI_InvOT',
     'GMOE_InvAdv',
@@ -77,6 +80,10 @@ ALGORITHMS = [
 
 def get_algorithm_class(algorithm_name):
     """Return the algorithm class with the given name."""
+    if algorithm_name == 'MESSI_SubsetIRM':
+        # Kept lazy because domainbed.subset_irm reuses the public MESSI base.
+        from domainbed.subset_irm import MESSISubsetIRM
+        return MESSISubsetIRM
     if algorithm_name not in globals():
         raise NotImplementedError("Algorithm not found: {}".format(algorithm_name))
     return globals()[algorithm_name]
@@ -1195,6 +1202,64 @@ class GMOE_InvMMD(GMoEVariantBase):
             'loss_bal': l_bal.item(),
             'loss_div': l_div.item(),
         }
+
+
+class MESSI(GMOE_InvMMD):
+    """Inference-compatible public name for GMOE_InvMMD checkpoints."""
+
+    def __init__(self, input_shape, num_classes, num_domains, hparams):
+        super().__init__(input_shape, num_classes, num_domains, hparams)
+
+        # Published DeiT-Small PACS checkpoints use the legacy non-distilled
+        # layout. Newly trained DeiT-Tiny checkpoints retain the distilled
+        # token and their 198-token positional embedding.
+        vit = self.featurizer.vit
+        legacy_non_distilled = hparams.get(
+            "legacy_non_distilled_deit",
+            hparams.get("model") == "deit_small_patch16_224",
+        )
+        if legacy_non_distilled and getattr(vit, "dist_token", None) is not None:
+            vit.dist_token = None
+            vit.num_tokens = 1
+            vit.pos_embed = nn.Parameter(vit.pos_embed.new_empty(
+                1, vit.pos_embed.shape[1] - 1, vit.pos_embed.shape[2]
+            ))
+
+        # Training bookkeeping is deliberately absent from inference files.
+        self.register_buffer(
+            "_update_count", self._update_count, persistent=False
+        )
+
+    def load_state_dict(self, state_dict, strict=True):
+        """Match the DeiT prefix-token layout encoded by the checkpoint."""
+        vit = self.featurizer.vit
+        dist_key = "featurizer.vit.dist_token"
+        pos_key = "featurizer.vit.pos_embed"
+        checkpoint_has_dist_token = dist_key in state_dict
+        model_has_dist_token = getattr(vit, "dist_token", None) is not None
+
+        if not checkpoint_has_dist_token and model_has_dist_token:
+            vit.dist_token = None
+            vit.num_tokens = 1
+            if pos_key in state_dict:
+                vit.pos_embed = nn.Parameter(
+                    vit.pos_embed.new_empty(state_dict[pos_key].shape)
+                )
+        elif checkpoint_has_dist_token and not model_has_dist_token:
+            vit.dist_token = nn.Parameter(
+                vit.pos_embed.new_empty(state_dict[dist_key].shape)
+            )
+            vit.num_tokens = 2
+            if pos_key in state_dict:
+                vit.pos_embed = nn.Parameter(
+                    vit.pos_embed.new_empty(state_dict[pos_key].shape)
+                )
+
+        return super().load_state_dict(state_dict, strict=strict)
+
+
+class MESSI_MMD(MESSI):
+    """Explicit inference name for MESSI checkpoints trained with MMD."""
 
 
 # ---------------------------------------------------------------------------
