@@ -426,10 +426,10 @@ def run(args):
     summary = {
         "run": args.run,
         "prediction_mode": hparams["subset_irm_prediction_mode"],
-        "encoder_skip_enabled": hparams.get(
-            "subset_irm_encoder_skip_enabled", False
+        "feature_skip_enabled": hparams.get(
+            "subset_irm_feature_skip_enabled", False
         ),
-        "encoder_skip_scale": hparams.get("subset_irm_encoder_skip_scale", 1.0),
+        "feature_skip_scale": hparams.get("subset_irm_feature_skip_scale", 1.0),
         "topk": hparams["subset_irm_router_topk"],
         "lambda_expert": hparams["subset_irm_lambda_expert"],
         "lambda_route": hparams["subset_irm_lambda_route"],

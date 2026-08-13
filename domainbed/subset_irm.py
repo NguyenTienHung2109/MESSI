@@ -474,18 +474,18 @@ class MESSISubsetIRM(algorithms.MESSI):
         self.use_expert_heads = bool(hparams.get(
             "subset_irm_use_expert_heads", self.subset_enabled
         ))
-        self.encoder_skip_enabled = bool(hparams.get(
-            "subset_irm_encoder_skip_enabled", False
+        self.feature_skip_enabled = bool(hparams.get(
+            "subset_irm_feature_skip_enabled", False
         ))
-        self.encoder_skip_scale = float(hparams.get(
-            "subset_irm_encoder_skip_scale", 1.0
+        self.feature_skip_scale = float(hparams.get(
+            "subset_irm_feature_skip_scale", 1.0
         ))
-        if not math.isfinite(self.encoder_skip_scale):
-            raise ValueError("subset_irm_encoder_skip_scale must be finite")
-        if (self.encoder_skip_enabled and
+        if not math.isfinite(self.feature_skip_scale):
+            raise ValueError("subset_irm_feature_skip_scale must be finite")
+        if (self.feature_skip_enabled and
                 self.prediction_mode != "expert_logit_mix"):
             raise ValueError(
-                "encoder logit skip requires expert_logit_mix prediction mode"
+                "expert feature skip requires expert_logit_mix prediction mode"
             )
         self.lambda_expert = float(hparams.get("subset_irm_lambda_expert", 0.0))
         self.lambda_route = float(hparams.get("subset_irm_lambda_route", 0.0))
@@ -580,16 +580,6 @@ class MESSISubsetIRM(algorithms.MESSI):
             self.num_experts, self.moe_head.expert_dim, self.num_classes,
             shared_classifier=self.moe_head.classifier,
         ).to(next(self.moe_head.parameters()).device)
-        if self.encoder_skip_enabled:
-            self.encoder_skip_classifier = nn.Linear(
-                self.featurizer.n_outputs, self.num_classes
-            ).to(next(self.moe_head.parameters()).device)
-            with torch.no_grad():
-                shared = self.moe_head.classifier
-                if shared.weight.shape == self.encoder_skip_classifier.weight.shape:
-                    self.encoder_skip_classifier.weight.copy_(shared.weight)
-                    if shared.bias is not None:
-                        self.encoder_skip_classifier.bias.copy_(shared.bias)
         self.risk_ema = SourceRiskEMA(
             num_domains, self.num_experts,
             beta=float(hparams.get("subset_irm_assignment_ema", 0.9)),
@@ -601,8 +591,6 @@ class MESSISubsetIRM(algorithms.MESSI):
         self.register_buffer("sirm_active_steps", torch.zeros((), dtype=torch.long))
 
         trainable_modules = [self.featurizer, self.moe_head, self.expert_heads]
-        if self.encoder_skip_enabled:
-            trainable_modules.append(self.encoder_skip_classifier)
         trainable = [
             parameter
             for module in trainable_modules
@@ -624,25 +612,32 @@ class MESSISubsetIRM(algorithms.MESSI):
     def _subset_forward(self, x):
         z = self.featurizer(x)
         z_moe = self.moe_head.input_proj(z)
-        h_stack = torch.stack([
+        raw_h_stack = torch.stack([
             expert(z_moe) for expert in self.moe_head.experts
         ], dim=1)
         dense_pi = F.softmax(self.moe_head.router(z_moe), dim=-1)
         gamma = self._routing_responsibilities(dense_pi)
-        shared_features = (dense_pi.unsqueeze(-1) * h_stack).sum(dim=1)
+        shared_features = (dense_pi.unsqueeze(-1) * raw_h_stack).sum(dim=1)
         shared_logits = self.moe_head.classifier(shared_features)
+        if self.feature_skip_enabled:
+            if z.shape[1] != raw_h_stack.shape[2]:
+                raise ValueError(
+                    "encoder z0 and expert h_m dimensions must match for "
+                    f"feature skip, got {z.shape[1]} and {raw_h_stack.shape[2]}"
+                )
+            h_stack = (
+                raw_h_stack
+                + self.feature_skip_scale * z.unsqueeze(1)
+            )
+        else:
+            h_stack = raw_h_stack
         expert_logits = self.expert_heads(h_stack)
         if self.prediction_mode == "expert_logit_mix":
-            moe_logits = (gamma.unsqueeze(-1) * expert_logits).sum(dim=1)
+            logits = (gamma.unsqueeze(-1) * expert_logits).sum(dim=1)
         else:
-            moe_logits = shared_logits
-        if self.encoder_skip_enabled:
-            encoder_skip_logits = self.encoder_skip_classifier(z)
-        else:
-            encoder_skip_logits = torch.zeros_like(moe_logits)
-        logits = moe_logits + self.encoder_skip_scale * encoder_skip_logits
+            logits = shared_logits
         return (logits, dense_pi, gamma, h_stack, expert_logits, shared_logits,
-                moe_logits, encoder_skip_logits)
+                raw_h_stack, z)
 
     def _forward(self, x):
         if not self.subset_enabled:
@@ -688,10 +683,6 @@ class MESSISubsetIRM(algorithms.MESSI):
             ("experts", list(self.moe_head.experts.parameters())),
             ("expert_heads", list(self.expert_heads.parameters())),
         ])
-        if self.encoder_skip_enabled:
-            groups["encoder_skip_classifier"] = list(
-                self.encoder_skip_classifier.parameters()
-            )
         result = {}
         for loss_name, loss in losses.items():
             for group_name, parameters in groups.items():
@@ -707,7 +698,7 @@ class MESSISubsetIRM(algorithms.MESSI):
         all_y = torch.cat([y for _, y in minibatches])
         domain_ids = self._get_domain_ids(minibatches)
         (logits, dense_pi, gamma, h_stack, expert_logits,
-         _, moe_logits, encoder_skip_logits) = self._subset_forward(all_x)
+         _, raw_h_stack, encoder_z0) = self._subset_forward(all_x)
 
         l_cls = F.cross_entropy(logits, all_y)
         l_expert = expert_predictive_loss(
@@ -925,18 +916,20 @@ class MESSISubsetIRM(algorithms.MESSI):
             ].cpu().tolist(),
             "expert_load": load.detach().cpu().tolist(),
             "per_expert_accuracy": expert_acc,
-            "encoder_skip_enabled": self.encoder_skip_enabled,
-            "encoder_skip_scale": self.encoder_skip_scale,
-            "moe_logit_norm": float(
-                moe_logits.detach().float().norm(dim=1).mean().item()
+            "feature_skip_enabled": self.feature_skip_enabled,
+            "feature_skip_scale": self.feature_skip_scale,
+            "encoder_z0_norm": float(
+                encoder_z0.detach().float().norm(dim=1).mean().item()
             ),
-            "encoder_skip_logit_norm": float(
-                encoder_skip_logits.detach().float().norm(dim=1).mean().item()
+            "raw_expert_feature_norm": float(
+                raw_h_stack.detach().float().norm(dim=2).mean().item()
             ),
-            "skip_to_moe_logit_norm_ratio": float(
-                self.encoder_skip_scale
-                * encoder_skip_logits.detach().float().norm(dim=1).mean().item()
-                / max(moe_logits.detach().float().norm(dim=1).mean().item(), EPS)
+            "skip_to_expert_feature_norm_ratio": float(
+                self.feature_skip_scale
+                * encoder_z0.detach().float().norm(dim=1).mean().item()
+                / max(
+                    raw_h_stack.detach().float().norm(dim=2).mean().item(), EPS
+                )
             ),
             "ssi_mode": self.ssi_mode,
             "ssi_active": float(ssi_info["active"]),

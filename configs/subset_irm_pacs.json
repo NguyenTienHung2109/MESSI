@@ -32,8 +32,8 @@
     "subset_irm_router_topk": null,
     "subset_irm_topk_warmup_steps": 500,
     "subset_irm_use_expert_heads": false,
-    "subset_irm_encoder_skip_enabled": false,
-    "subset_irm_encoder_skip_scale": 1.0,
+    "subset_irm_feature_skip_enabled": false,
+    "subset_irm_feature_skip_scale": 1.0,
     "subset_irm_lambda_expert": 0.0,
     "subset_irm_lambda_route": 0.0,
     "subset_irm_lambda_sirm": 0.0,
@@ -578,16 +578,16 @@
         "subset_irm_ssi_mode": "none"
       }
     },
-    "SIRMCurrentSkipLogit": {
+    "SIRMCurrentFeatureSkip": {
       "algorithm": "MESSI_SubsetIRM",
-      "description": "SIRMCurrent plus encoder z0 classifier logit residual",
+      "description": "SIRMCurrent with encoder z0 added to every expert feature h_m",
       "hparams": {
         "legacy_non_distilled_deit": false,
         "subset_irm_enabled": true,
         "subset_irm_use_expert_heads": true,
         "subset_irm_prediction_mode": "expert_logit_mix",
-        "subset_irm_encoder_skip_enabled": true,
-        "subset_irm_encoder_skip_scale": 1.0,
+        "subset_irm_feature_skip_enabled": true,
+        "subset_irm_feature_skip_scale": 1.0,
         "subset_irm_router_topk": 2,
         "subset_irm_topk_warmup_steps": 500,
         "subset_irm_lambda_expert": 0.1,

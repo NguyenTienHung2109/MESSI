@@ -124,11 +124,11 @@ SIRM runs use the `dg` conda environment and sync online by default to
 bash scripts/run_subset_irm_pacs.sh SIRMCurrent
 ```
 
-The encoder-logit skip variant uses
-`logits = C0(z0) + sum_m gamma_m C_m(h_m)` and can be run with:
+The expert feature-skip variant uses
+`logits = sum_m gamma_m C_m(h_m + z0)` and can be run with:
 
 ```sh
-bash scripts/run_subset_irm_pacs.sh SIRMCurrentSkipLogit
+bash scripts/run_subset_irm_pacs.sh SIRMCurrentFeatureSkip
 ```
 
 The Python entry point has the same defaults:

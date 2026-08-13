@@ -410,7 +410,7 @@ class TestSubsetIRMPenalty(unittest.TestCase):
 
 @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")
 class TestMESSIIntegration(unittest.TestCase):
-    def test_encoder_classifier_skip_adds_to_top2_moe_logits(self):
+    def test_encoder_z0_is_added_to_top2_expert_features(self):
         hparams = {
             "model": "deit_tiny_patch16_224",
             "pretrained": False,
@@ -430,42 +430,43 @@ class TestMESSIIntegration(unittest.TestCase):
             "subset_irm_router_topk": 2,
             "subset_irm_topk_warmup_steps": 0,
             "subset_irm_use_expert_heads": True,
-            "subset_irm_encoder_skip_enabled": True,
-            "subset_irm_encoder_skip_scale": 0.75,
+            "subset_irm_feature_skip_enabled": True,
+            "subset_irm_feature_skip_scale": 0.75,
             "subset_irm_lambda_expert": 0.0,
             "subset_irm_lambda_route": 0.0,
             "subset_irm_lambda_sirm": 0.0,
         }
         model = MESSISubsetIRM((3, 224, 224), 7, 3, hparams).eval()
-        torch.testing.assert_close(
-            model.encoder_skip_classifier.weight,
-            model.moe_head.classifier.weight,
-        )
-        torch.testing.assert_close(
-            model.encoder_skip_classifier.bias,
-            model.moe_head.classifier.bias,
-        )
+        self.assertFalse(hasattr(model, "encoder_skip_classifier"))
 
         x = torch.randn(2, 3, 224, 224, device="cuda")
         output = model._subset_forward(x)
-        logits, gamma, moe_logits, skip_logits = (
-            output[0], output[2], output[6], output[7]
+        logits, gamma, residual_features, expert_logits, raw_features, z0 = (
+            output[0], output[2], output[3], output[4], output[6], output[7]
         )
         torch.testing.assert_close(
-            logits, moe_logits + 0.75 * skip_logits
+            residual_features, raw_features + 0.75 * z0.unsqueeze(1)
+        )
+        torch.testing.assert_close(
+            logits, (gamma.unsqueeze(-1) * expert_logits).sum(dim=1)
         )
         torch.testing.assert_close(
             gamma.gt(0).sum(dim=1),
             torch.full((2,), 2, device="cuda"),
         )
         F.cross_entropy(logits, torch.tensor([0, 1], device="cuda")).backward()
-        self.assertGreater(
-            model.encoder_skip_classifier.weight.grad.abs().sum().item(), 0
-        )
+        self.assertTrue(any(
+            parameter.grad is not None and parameter.grad.abs().sum().item() > 0
+            for parameter in model.featurizer.parameters()
+        ))
 
-        model.encoder_skip_enabled = False
+        model.feature_skip_enabled = False
         without_skip = model._subset_forward(x)
-        torch.testing.assert_close(without_skip[0], without_skip[6])
+        torch.testing.assert_close(without_skip[3], without_skip[6])
+        torch.testing.assert_close(
+            without_skip[0],
+            (without_skip[2].unsqueeze(-1) * without_skip[4]).sum(dim=1),
+        )
 
     def test_loss_schedule_changes_only_at_configured_steps(self):
         hparams = {
