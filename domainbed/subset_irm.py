@@ -465,14 +465,18 @@ class MESSISubsetIRM(algorithms.MESSI):
         self.prediction_mode = hparams.get(
             "subset_irm_prediction_mode", "shared_feature_mix"
         )
-        if self.prediction_mode not in ("shared_feature_mix", "expert_logit_mix"):
+        if self.prediction_mode not in (
+                "shared_feature_mix", "expert_logit_mix", "shared_residual_mix"):
             raise ValueError("invalid subset_irm_prediction_mode")
         self.router_topk = hparams.get("subset_irm_router_topk")
         self.topk_warmup_steps = int(hparams.get(
             "subset_irm_topk_warmup_steps", 0
         ))
+        default_expert_heads = (
+            self.subset_enabled and self.prediction_mode != "shared_residual_mix"
+        )
         self.use_expert_heads = bool(hparams.get(
-            "subset_irm_use_expert_heads", self.subset_enabled
+            "subset_irm_use_expert_heads", default_expert_heads
         ))
         self.feature_skip_enabled = bool(hparams.get(
             "subset_irm_feature_skip_enabled", False
@@ -482,10 +486,16 @@ class MESSISubsetIRM(algorithms.MESSI):
         ))
         if not math.isfinite(self.feature_skip_scale):
             raise ValueError("subset_irm_feature_skip_scale must be finite")
-        if (self.feature_skip_enabled and
-                self.prediction_mode != "expert_logit_mix"):
+        if (self.feature_skip_enabled and self.prediction_mode not in (
+                "expert_logit_mix", "shared_residual_mix")):
             raise ValueError(
-                "expert feature skip requires expert_logit_mix prediction mode"
+                "expert feature skip requires expert_logit_mix or "
+                "shared_residual_mix prediction mode"
+            )
+        if (self.prediction_mode == "shared_residual_mix" and
+                not self.feature_skip_enabled):
+            raise ValueError(
+                "shared_residual_mix requires subset_irm_feature_skip_enabled"
             )
         self.lambda_expert = float(hparams.get("subset_irm_lambda_expert", 0.0))
         self.lambda_route = float(hparams.get("subset_irm_lambda_route", 0.0))
@@ -574,12 +584,19 @@ class MESSISubsetIRM(algorithms.MESSI):
 
         if not self.subset_enabled:
             return
-        if not self.use_expert_heads:
-            raise ValueError("Subset-IRM enabled mode requires expert heads")
-        self.expert_heads = ExpertClassifierHeads(
-            self.num_experts, self.moe_head.expert_dim, self.num_classes,
-            shared_classifier=self.moe_head.classifier,
-        ).to(next(self.moe_head.parameters()).device)
+        if self.prediction_mode == "shared_residual_mix":
+            if self.use_expert_heads:
+                raise ValueError(
+                    "shared_residual_mix uses one shared classifier and cannot "
+                    "enable expert heads"
+                )
+        else:
+            if not self.use_expert_heads:
+                raise ValueError("Subset-IRM enabled mode requires expert heads")
+            self.expert_heads = ExpertClassifierHeads(
+                self.num_experts, self.moe_head.expert_dim, self.num_classes,
+                shared_classifier=self.moe_head.classifier,
+            ).to(next(self.moe_head.parameters()).device)
         self.risk_ema = SourceRiskEMA(
             num_domains, self.num_experts,
             beta=float(hparams.get("subset_irm_assignment_ema", 0.9)),
@@ -590,7 +607,9 @@ class MESSISubsetIRM(algorithms.MESSI):
         ))
         self.register_buffer("sirm_active_steps", torch.zeros((), dtype=torch.long))
 
-        trainable_modules = [self.featurizer, self.moe_head, self.expert_heads]
+        trainable_modules = [self.featurizer, self.moe_head]
+        if hasattr(self, "expert_heads"):
+            trainable_modules.append(self.expert_heads)
         trainable = [
             parameter
             for module in trainable_modules
@@ -631,10 +650,21 @@ class MESSISubsetIRM(algorithms.MESSI):
             )
         else:
             h_stack = raw_h_stack
-        expert_logits = self.expert_heads(h_stack)
+        if self.prediction_mode == "shared_residual_mix":
+            mixed_expert_features = (
+                gamma.unsqueeze(-1) * raw_h_stack
+            ).sum(dim=1)
+            mixed_features = (
+                z + self.feature_skip_scale * mixed_expert_features
+            )
+            logits = self.moe_head.classifier(mixed_features)
+            expert_logits = self.moe_head.classifier(h_stack)
+            shared_logits = logits
+        else:
+            expert_logits = self.expert_heads(h_stack)
         if self.prediction_mode == "expert_logit_mix":
             logits = (gamma.unsqueeze(-1) * expert_logits).sum(dim=1)
-        else:
+        elif self.prediction_mode == "shared_feature_mix":
             logits = shared_logits
         return (logits, dense_pi, gamma, h_stack, expert_logits, shared_logits,
                 raw_h_stack, z)
@@ -681,8 +711,10 @@ class MESSISubsetIRM(algorithms.MESSI):
             ("backbone", list(self.featurizer.parameters())),
             ("router", list(self.moe_head.router.parameters())),
             ("experts", list(self.moe_head.experts.parameters())),
-            ("expert_heads", list(self.expert_heads.parameters())),
+            ("shared_classifier", list(self.moe_head.classifier.parameters())),
         ])
+        if hasattr(self, "expert_heads"):
+            groups["expert_heads"] = list(self.expert_heads.parameters())
         result = {}
         for loss_name, loss in losses.items():
             for group_name, parameters in groups.items():

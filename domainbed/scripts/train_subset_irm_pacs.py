@@ -404,8 +404,8 @@ def run(args):
         for env, value in source_scores.items():
             wandb_metrics[f"eval/source_val_env{env}"] = value
         for key, value in eval_scores.items():
-            split = "in" if "_in_acc" in key else "out"
-            wandb_metrics[f"eval/{split}/{key}"] = value
+            split_name = "in" if "_in_acc" in key else "out"
+            wandb_metrics[f"eval/{split_name}/{key}"] = value
         wandb_run.log(wandb_metrics)
         window = collections.defaultdict(list)
         print(json.dumps({"run": args.run, **record}, sort_keys=True), flush=True)

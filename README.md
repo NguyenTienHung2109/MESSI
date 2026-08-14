@@ -131,6 +131,13 @@ The expert feature-skip variant uses
 bash scripts/run_subset_irm_pacs.sh SIRMCurrentFeatureSkip
 ```
 
+The shared-classifier residual variant uses
+`logits = C(z0 + sum_m gamma_m h_m)` and can be run with:
+
+```sh
+bash scripts/run_subset_irm_pacs.sh SIRMCurrentSharedResidual
+```
+
 The Python entry point has the same defaults:
 
 ```sh

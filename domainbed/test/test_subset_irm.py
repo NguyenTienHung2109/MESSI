@@ -410,6 +410,59 @@ class TestSubsetIRMPenalty(unittest.TestCase):
 
 @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")
 class TestMESSIIntegration(unittest.TestCase):
+    def test_shared_residual_mix_uses_one_classifier_after_top2_mix(self):
+        hparams = {
+            "model": "deit_tiny_patch16_224",
+            "pretrained": False,
+            "legacy_non_distilled_deit": False,
+            "moe_dim": "auto",
+            "num_experts": 6,
+            "expert_mlp_ratio": 2,
+            "lr": 3e-5,
+            "weight_decay": 1e-6,
+            "lambda_inv": 0.0,
+            "lambda_sp": 0.0,
+            "lambda_bal": 0.0,
+            "lambda_div": 0.0,
+            "alpha": 4.0,
+            "subset_irm_enabled": True,
+            "subset_irm_prediction_mode": "shared_residual_mix",
+            "subset_irm_router_topk": 2,
+            "subset_irm_topk_warmup_steps": 0,
+            "subset_irm_use_expert_heads": False,
+            "subset_irm_feature_skip_enabled": True,
+            "subset_irm_feature_skip_scale": 1.0,
+            "subset_irm_lambda_expert": 0.0,
+            "subset_irm_lambda_route": 0.0,
+            "subset_irm_lambda_sirm": 0.0,
+        }
+        model = MESSISubsetIRM((3, 224, 224), 7, 3, hparams).eval()
+        self.assertFalse(hasattr(model, "expert_heads"))
+
+        x = torch.randn(2, 3, 224, 224, device="cuda")
+        output = model._subset_forward(x)
+        logits, gamma, expert_features, expert_logits, raw_features, z0 = (
+            output[0], output[2], output[3], output[4], output[6], output[7]
+        )
+        mixed_experts = (gamma.unsqueeze(-1) * raw_features).sum(dim=1)
+        torch.testing.assert_close(
+            logits, model.moe_head.classifier(z0 + mixed_experts)
+        )
+        torch.testing.assert_close(
+            expert_features, z0.unsqueeze(1) + raw_features
+        )
+        torch.testing.assert_close(
+            expert_logits, model.moe_head.classifier(expert_features)
+        )
+        torch.testing.assert_close(
+            gamma.gt(0).sum(dim=1),
+            torch.full((2,), 2, device="cuda"),
+        )
+        F.cross_entropy(logits, torch.tensor([0, 1], device="cuda")).backward()
+        self.assertGreater(
+            model.moe_head.classifier.weight.grad.abs().sum().item(), 0
+        )
+
     def test_encoder_z0_is_added_to_top2_expert_features(self):
         hparams = {
             "model": "deit_tiny_patch16_224",
