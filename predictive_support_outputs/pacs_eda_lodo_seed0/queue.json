@@ -1,0 +1,41 @@
+{
+  "pid": 12571,
+  "config": "configs/predictive_support_pacs.json",
+  "seed": 0,
+  "jobs": [
+    {
+      "target_env": 0,
+      "state": "completed",
+      "output": "predictive_support_outputs/pacs_eda_lodo_seed0/env0_seed0",
+      "log": "predictive_support_outputs/pacs_eda_lodo_seed0/env0_seed0.log",
+      "pid": 12572,
+      "returncode": 0
+    },
+    {
+      "target_env": 1,
+      "state": "completed",
+      "output": "predictive_support_outputs/pacs_eda_lodo_seed0/env1_seed0",
+      "log": "predictive_support_outputs/pacs_eda_lodo_seed0/env1_seed0.log",
+      "pid": 42258,
+      "returncode": 0
+    },
+    {
+      "target_env": 2,
+      "state": "completed",
+      "output": "predictive_support_outputs/pacs_eda_lodo_seed0/env2_seed0",
+      "log": "predictive_support_outputs/pacs_eda_lodo_seed0/env2_seed0.log",
+      "pid": 52083,
+      "returncode": 0
+    },
+    {
+      "target_env": 3,
+      "state": "completed",
+      "output": "predictive_support_outputs/pacs_eda_lodo_seed0/env3_seed0",
+      "log": "predictive_support_outputs/pacs_eda_lodo_seed0/env3_seed0.log",
+      "pid": 58092,
+      "returncode": 0
+    }
+  ],
+  "started_utc": "2026-09-28T07:20:15.509303+00:00",
+  "state": "completed"
+}

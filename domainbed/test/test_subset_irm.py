@@ -10,7 +10,10 @@ from domainbed.subset_irm import (
     SourceRiskEMA,
     expert_domain_risk,
     expert_predictive_loss,
+    expert_representation_diagnostics,
+    global_irm_penalty,
     per_sample_topk,
+    q_capacity_lambda_at_step,
     q_capacity_loss,
     q_gated_sinkhorn_divergence,
     router_distillation_loss,
@@ -174,6 +177,53 @@ class TestRiskAndExpertLoss(unittest.TestCase):
                 self.assertEqual(head_norm, 0)
 
 
+class TestGlobalExpertDiagnostics(unittest.TestCase):
+    def test_global_irm_penalty_is_finite_and_backpropagates(self):
+        logits = torch.randn(8, 3, requires_grad=True)
+        targets = torch.tensor([0, 1, 2, 0, 1, 2, 0, 1])
+        domains = torch.tensor([0, 0, 0, 0, 1, 1, 1, 1])
+        penalty = global_irm_penalty(logits, targets, domains, 2)
+        penalty.backward()
+        self.assertTrue(torch.isfinite(penalty))
+        self.assertIsNotNone(logits.grad)
+        self.assertTrue(torch.isfinite(logits.grad).all())
+
+    def test_similarity_detects_identical_and_unselected_experts(self):
+        torch.manual_seed(7)
+        global_features = torch.randn(6, 5)
+        expert_features = torch.stack([
+            global_features,
+            torch.randn(6, 5),
+            torch.zeros(6, 5),
+        ], dim=1)
+        global_logits = torch.randn(6, 4)
+        expert_logits = torch.stack([
+            global_logits,
+            torch.randn(6, 4),
+            torch.zeros(6, 4),
+        ], dim=1)
+        gamma = torch.tensor([
+            [1.0, 0.0, 0.0], [1.0, 0.0, 0.0],
+            [0.5, 0.5, 0.0], [0.5, 0.5, 0.0],
+            [0.0, 1.0, 0.0], [0.0, 1.0, 0.0],
+        ])
+        info = expert_representation_diagnostics(
+            expert_features, expert_logits, global_features, global_logits,
+            gamma,
+        )
+        self.assertEqual(info["labels"], [
+            "global", "subset_0", "subset_1", "subset_2"
+        ])
+        self.assertAlmostEqual(
+            info["feature_cosine_matrix"][0, 1].item(), 1.0, places=5
+        )
+        self.assertAlmostEqual(
+            info["feature_linear_cka_matrix"][0, 1].item(), 1.0, places=5
+        )
+        self.assertEqual(info["subset_selected_count"].tolist(), [4, 4, 0])
+        self.assertEqual(info["feature_variance"][-1].item(), 0.0)
+
+
 class TestAssignmentAndDistillation(unittest.TestCase):
     def test_risk_ema_and_topr_assignment_are_source_only(self):
         risks = torch.tensor([[0.1, 1.0, 2.0], [1.2, 0.2, 0.8]])
@@ -237,6 +287,29 @@ class TestTargetCheckpointDiagnostics(unittest.TestCase):
 
 
 class TestQCapacity(unittest.TestCase):
+    def test_schedule_holds_then_linearly_decays_then_turns_off(self):
+        values = {
+            step: q_capacity_lambda_at_step(
+                step, 2.0, decay_start_step=1000, decay_end_step=2000
+            )
+            for step in (0, 999, 1000, 1250, 1500, 1999, 2000, 2500)
+        }
+        self.assertEqual(values[0], 2.0)
+        self.assertEqual(values[999], 2.0)
+        self.assertEqual(values[1000], 2.0)
+        self.assertEqual(values[1250], 1.5)
+        self.assertEqual(values[1500], 1.0)
+        self.assertAlmostEqual(values[1999], 0.002)
+        self.assertEqual(values[2000], 0.0)
+        self.assertEqual(values[2500], 0.0)
+
+    def test_schedule_rejects_incomplete_or_reversed_decay_bounds(self):
+        for start, end in ((1000, -1), (-1, 2000), (2000, 1000)):
+            with self.assertRaises(ValueError):
+                q_capacity_lambda_at_step(
+                    0, 1.0, decay_start_step=start, decay_end_step=end
+                )
+
     def test_matches_hinge_capacity_formula_and_has_gradient(self):
         probabilities = torch.tensor([
             [0.7, 0.3, 0.0], [0.5, 0.5, 0.0],

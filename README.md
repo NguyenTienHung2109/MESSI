@@ -6,6 +6,13 @@
 
 Wondering why GMoEs have astonishing performance? 🤯 Let's investigate the generalization ability of model architecture itself and see the great potentials of Sparse Mixture-of-Experts (MoE) architecture.
 
+## Predictive binary subset supports
+
+The new `MESSI_Support` method learns overlapping domain supports with local
+expert supervision, routing admissibility and conditional MMD. See the
+[implementation and running guide](docs/predictive_support.md) for PACS /
+TerraIncognita configurations, smoke tests and matched interventions.
+
 ## Quickstart: K-domain sweeps on iWildCam (WILDS) and MetaShift
 
 ### 0. Clone & install

@@ -248,6 +248,13 @@ def _hparams(algorithm, dataset, random_seed):
         _hparam('ot_epsilon',         0.1,                      lambda r: 0.1)
         _hparam('sinkhorn_iters',     50,                       lambda r: 50)
 
+    if algorithm == 'MESSI_Support':
+        defaults = dict(model='deit_small_patch16_224', num_experts=6,
+                        support_classifier_norm=5.0, support_bandwidth=1.0,
+                        support_lambda_sub=1.0, support_warmup_steps=100)
+        for name, value in defaults.items():
+            _hparam(name, value, lambda r, v=value: v)
+
     if algorithm == 'MESSI_SubsetIRM':
         # Explicit opt-in surface. Every new coefficient is zero by default;
         # the legacy MESSI coefficients retain their established defaults.
@@ -267,6 +274,22 @@ def _hparams(algorithm, dataset, random_seed):
         _hparam('subset_irm_lambda_expert', 0.0,                 lambda r: 0.0)
         _hparam('subset_irm_lambda_route', 0.0,                  lambda r: 0.0)
         _hparam('subset_irm_lambda_sirm', 0.0,                   lambda r: 0.0)
+        _hparam('subset_irm_lambda_q_capacity', 0.0,             lambda r: 0.0)
+        _hparam('subset_irm_q_capacity_rho_max', 1.0,            lambda r: 1.0)
+        _hparam('subset_irm_q_capacity_anneal_steps', 0,         lambda r: 0)
+        _hparam('subset_irm_q_capacity_ramp_steps', 0,           lambda r: 0)
+        _hparam('subset_irm_q_capacity_post_step', -1,           lambda r: -1)
+        _hparam('subset_irm_q_capacity_post_lambda', 0.0,        lambda r: 0.0)
+        _hparam('subset_irm_q_capacity_decay_start_step', -1,    lambda r: -1)
+        _hparam('subset_irm_q_capacity_decay_end_step', -1,      lambda r: -1)
+        _hparam('subset_irm_global_expert_enabled', False,        lambda r: False)
+        _hparam('subset_irm_global_training_mode', 'joint',       lambda r: 'joint')
+        _hparam('subset_irm_global_logit_weight', 1.0,            lambda r: 1.0)
+        _hparam('subset_irm_lambda_global_expert', 1.0,           lambda r: 1.0)
+        _hparam('subset_irm_lambda_global_irm', 0.0,              lambda r: 0.0)
+        _hparam('subset_irm_global_irm_anneal_steps', 0,          lambda r: 0)
+        _hparam('subset_irm_global_irm_ramp_steps', 0,            lambda r: 0)
+        _hparam('subset_irm_similarity_log_interval', 100,        lambda r: 100)
         _hparam('subset_irm_responsibility_detach', True,       lambda r: True)
         _hparam('subset_irm_assignment_mode', 'risk_ema',       lambda r: 'risk_ema')
         _hparam('subset_irm_assignment_topr', 2,                lambda r: 2)
@@ -275,6 +298,26 @@ def _hparams(algorithm, dataset, random_seed):
         _hparam('subset_irm_probe_interval', 100,                lambda r: 100)
         _hparam('subset_irm_min_effective_samples', 2,          lambda r: 2)
         _hparam('subset_irm_sirm_anneal_steps', 0,              lambda r: 0)
+
+    if algorithm == 'S-IRM-res':
+        # Independent global-anchor + residual-expert surface.  None of the
+        # Subset-IRM/Q-capacity coefficients are consulted by this algorithm.
+        _hparam('model', 'deit_small_patch16_224', lambda r: 'deit_small_patch16_224')
+        _hparam('moe_dim', 'auto', lambda r: 'auto')
+        _hparam('num_total_experts', 6, lambda r: 6)
+        _hparam('expert_mlp_ratio', 4, lambda r: 4)
+        _hparam('sirm_res_global_steps', 4000, lambda r: 4000)
+        _hparam('sirm_res_residual_steps', 6000, lambda r: 6000)
+        _hparam('sirm_res_residual_scale', 1.0, lambda r: 1.0)
+        _hparam('sirm_res_router_topk', 2, lambda r: 2)
+        _hparam('sirm_res_q_min', 0.2, lambda r: 0.2)
+        _hparam('sirm_res_router_temperature', 1.0, lambda r: 1.0)
+        _hparam('sirm_res_lambda_router', 1.0, lambda r: 1.0)
+        _hparam('sirm_res_lambda_sirm', 1.0, lambda r: 1.0)
+        _hparam('sirm_res_assignment_topr', 2, lambda r: 2)
+        _hparam('sirm_res_assignment_temperature', 1.0, lambda r: 1.0)
+        _hparam('sirm_res_assignment_ema', 0.9, lambda r: 0.9)
+        _hparam('sirm_res_min_effective_samples', 2.0, lambda r: 2.0)
 
     if algorithm == 'rMESSI_InvOT':
         _hparam('model',              'deit_small_patch16_224', lambda r: 'deit_small_patch16_224')

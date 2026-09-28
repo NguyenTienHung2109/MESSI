@@ -1,0 +1,26 @@
+{
+  "dataset": "PACS",
+  "seed": 0,
+  "steps": 3,
+  "checkpoint_freq": 3,
+  "holdout_fraction": 0.2,
+  "eval_batch_size": 64,
+  "structure_interval": 1,
+  "structure_prediction_samples": 8,
+  "structure_cell_samples": 2,
+  "alignment_pair_draws": 1,
+  "alignment_cell_samples": 2,
+  "hparams": {
+    "model": "deit_tiny_patch16_224",
+    "pretrained": false,
+    "num_experts": 6,
+    "batch_size": 2,
+    "lr": 3e-05,
+    "weight_decay": 1e-06,
+    "support_classifier_norm": 5.0,
+    "support_bandwidth": 1.0,
+    "support_lambda_sub": 1.0,
+    "support_pair_budget": 3,
+    "support_warmup_steps": 1
+  }
+}

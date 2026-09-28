@@ -1,0 +1,48 @@
+{
+  "dataset": "PACS",
+  "target_env": 0,
+  "target_name": "art_painting",
+  "seed": 0,
+  "checkpoint_freq": 2,
+  "holdout_fraction": 0.2,
+  "eval_batch_size": 64,
+  "num_workers": 2,
+  "base_hparams": {
+    "model": "deit_tiny_patch16_224",
+    "pretrained": false,
+    "legacy_non_distilled_deit": false,
+    "patch_size": 16,
+    "moe_dim": "auto",
+    "num_total_experts": 6,
+    "expert_mlp_ratio": 4,
+    "batch_size": 8,
+    "lr": 0.00003,
+    "weight_decay": 0.000001,
+    "data_augmentation": true,
+    "class_balanced": false,
+    "sirm_res_global_steps": 2,
+    "sirm_res_residual_steps": 2,
+    "sirm_res_residual_scale": 1.0,
+    "sirm_res_router_topk": 2,
+    "sirm_res_q_min": 0.2,
+    "sirm_res_router_temperature": 1.0,
+    "sirm_res_lambda_router": 0.1,
+    "sirm_res_lambda_sirm": 0.1,
+    "sirm_res_assignment_topr": 2,
+    "sirm_res_assignment_temperature": 1.0,
+    "sirm_res_assignment_ema": 0.9,
+    "sirm_res_min_effective_samples": 2.0
+  },
+  "runs": {
+    "S-IRM-res_PACS_smoke": {
+      "algorithm": "S-IRM-res",
+      "description": "PACS one-target smoke: 2 global-anchor + 2 residual steps",
+      "hparams": {}
+    },
+    "S-IRM-res_PACS_smoke_no_sirm": {
+      "algorithm": "S-IRM-res",
+      "description": "Architecture-only control; marginal residual S-IRM disabled",
+      "hparams": {"sirm_res_lambda_sirm": 0.0}
+    }
+  }
+}

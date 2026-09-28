@@ -71,6 +71,8 @@ ALGORITHMS = [
     'MESSI',
     'MESSI_MMD',
     'MESSI_SubsetIRM',
+    'MESSI_Support',
+    'S-IRM-res',
     'GMOE_InvOT',
     'rMESSI_InvOT',
     'GMOE_InvAdv',
@@ -80,10 +82,18 @@ ALGORITHMS = [
 
 def get_algorithm_class(algorithm_name):
     """Return the algorithm class with the given name."""
+    if algorithm_name == 'MESSI_Support':
+        from domainbed.predictive_support import PredictiveSupport
+        return PredictiveSupport
     if algorithm_name == 'MESSI_SubsetIRM':
         # Kept lazy because domainbed.subset_irm reuses the public MESSI base.
         from domainbed.subset_irm import MESSISubsetIRM
         return MESSISubsetIRM
+    if algorithm_name == 'S-IRM-res':
+        # A distinct implementation: do not route the global anchor through
+        # the legacy Subset-IRM code path.
+        from domainbed.sirm_res import SIRMRes
+        return SIRMRes
     if algorithm_name not in globals():
         raise NotImplementedError("Algorithm not found: {}".format(algorithm_name))
     return globals()[algorithm_name]

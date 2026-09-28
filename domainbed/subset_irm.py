@@ -5,6 +5,7 @@ module provides a separately selected algorithm plus small, independently
 testable mathematical building blocks.
 """
 
+import copy
 from collections import OrderedDict
 from itertools import chain
 
@@ -118,6 +119,92 @@ def expert_predictive_loss(expert_logits, targets, responsibilities,
         for m in range(expert_logits.shape[1])
     ], dim=1)
     return (gamma.float() * ce).sum(dim=1).mean()
+
+
+def global_irm_penalty(logits, targets, domain_ids, num_domains):
+    """IRMv1 penalty for a global expert evaluated on every source domain."""
+    if logits.ndim != 2:
+        raise ValueError("global logits must have shape [batch, classes]")
+    if targets.ndim != 1 or targets.numel() != logits.shape[0]:
+        raise ValueError("targets must match global logits")
+    if domain_ids.ndim != 1 or domain_ids.numel() != logits.shape[0]:
+        raise ValueError("domain_ids must match global logits")
+    penalties = []
+    for domain in range(int(num_domains)):
+        mask = domain_ids.eq(domain)
+        if not bool(mask.any()):
+            continue
+        scale = logits.new_ones((), requires_grad=True)
+        risk = F.cross_entropy(logits[mask].float() * scale, targets[mask])
+        gradient = torch.autograd.grad(risk, [scale], create_graph=True)[0]
+        penalties.append(gradient.square())
+    if not penalties:
+        return logits.sum() * 0.0
+    return torch.stack(penalties).mean()
+
+
+def expert_representation_diagnostics(expert_features, expert_logits,
+                                      global_features, global_logits,
+                                      responsibilities, eps=EPS):
+    """Describe routing collapse separately from representation redundancy."""
+    if expert_features.ndim != 3 or expert_logits.ndim != 3:
+        raise ValueError("expert tensors must have shape [batch, experts, dim]")
+    if global_features.ndim != 2 or global_logits.ndim != 2:
+        raise ValueError("global tensors must have shape [batch, dim]")
+    features = torch.cat([global_features.unsqueeze(1), expert_features], dim=1).float()
+    logits = torch.cat([global_logits.unsqueeze(1), expert_logits], dim=1).float()
+    normalized_features = F.normalize(features, dim=-1, eps=eps)
+    normalized_logits = F.normalize(logits, dim=-1, eps=eps)
+    feature_cosine = torch.einsum(
+        "bmd,bnd->mn", normalized_features, normalized_features
+    ) / max(features.shape[0], 1)
+    logit_cosine = torch.einsum(
+        "bmc,bnc->mn", normalized_logits, normalized_logits
+    ) / max(logits.shape[0], 1)
+
+    centered = features - features.mean(dim=0, keepdim=True)
+    grams = torch.einsum("bmd,cmd->mbc", centered, centered)
+    grams = grams - grams.mean(dim=1, keepdim=True)
+    grams = grams - grams.mean(dim=2, keepdim=True)
+    grams = grams + grams.mean(dim=(1, 2), keepdim=True)
+    flat_grams = grams.flatten(1)
+    cka = flat_grams @ flat_grams.T
+    cka = cka / (
+        flat_grams.norm(dim=1).unsqueeze(1)
+        * flat_grams.norm(dim=1).unsqueeze(0)
+    ).clamp_min(eps)
+
+    predictions = logits.argmax(dim=-1)
+    agreement = predictions.unsqueeze(2).eq(predictions.unsqueeze(1)).float().mean(0)
+    selected = responsibilities.gt(0)
+    selected_counts = selected.sum(dim=0)
+    selected_global_cosine = []
+    for expert in range(expert_features.shape[1]):
+        mask = selected[:, expert]
+        if bool(mask.any()):
+            value = F.cosine_similarity(
+                global_features[mask].float(),
+                expert_features[mask, expert].float(), dim=-1, eps=eps,
+            ).mean()
+        else:
+            value = features.new_zeros(())
+        selected_global_cosine.append(value)
+
+    return {
+        "labels": ["global"] + [
+            f"subset_{index}" for index in range(expert_features.shape[1])
+        ],
+        "feature_cosine_matrix": feature_cosine.detach(),
+        "feature_linear_cka_matrix": cka.detach(),
+        "logit_cosine_matrix": logit_cosine.detach(),
+        "prediction_agreement_matrix": agreement.detach(),
+        "feature_variance": centered.square().mean(dim=(0, 2)).detach(),
+        "feature_centroid": features.mean(dim=0).detach(),
+        "subset_selected_count": selected_counts.detach(),
+        "global_to_selected_subset_cosine": torch.stack(
+            selected_global_cosine
+        ).detach(),
+    }
 
 
 def top_r_assignment(risk, valid, top_r=2, temperature=1.0, eps=EPS):
@@ -456,6 +543,50 @@ def _group_gradient_norm(loss, parameters):
     return float(squared.sqrt().item())
 
 
+def q_capacity_lambda_at_step(step, base_lambda, anneal_steps=0,
+                              ramp_steps=0, post_step=-1,
+                              post_lambda=None, decay_start_step=-1,
+                              decay_end_step=-1):
+    """Compute the Q-capacity coefficient for one optimizer step."""
+    step = int(step)
+    base_lambda = float(base_lambda)
+    anneal_steps = int(anneal_steps)
+    ramp_steps = int(ramp_steps)
+    post_step = int(post_step)
+    post_lambda = (base_lambda if post_lambda is None
+                   else float(post_lambda))
+    decay_start_step = int(decay_start_step)
+    decay_end_step = int(decay_end_step)
+
+    decay_enabled = decay_start_step >= 0 or decay_end_step >= 0
+    if decay_enabled and not (0 <= decay_start_step < decay_end_step):
+        raise ValueError(
+            "Q-capacity decay requires 0 <= decay_start_step < decay_end_step"
+        )
+
+    if step < anneal_steps:
+        coefficient = 0.0
+    elif ramp_steps > 0:
+        coefficient = base_lambda * min(
+            1.0, max(0.0, (step - anneal_steps) / ramp_steps)
+        )
+    else:
+        coefficient = base_lambda
+
+    if post_step >= 0 and step >= post_step:
+        coefficient = post_lambda
+
+    if decay_enabled:
+        if step >= decay_end_step:
+            coefficient = 0.0
+        elif step > decay_start_step:
+            coefficient *= (
+                (decay_end_step - step) /
+                (decay_end_step - decay_start_step)
+            )
+    return coefficient
+
+
 class MESSISubsetIRM(algorithms.MESSI):
     """Config-gated Subset-IRM algorithm; disabled mode delegates to MESSI."""
 
@@ -497,6 +628,21 @@ class MESSISubsetIRM(algorithms.MESSI):
         self.q_capacity_post_lambda = float(hparams.get(
             "subset_irm_q_capacity_post_lambda", self.lambda_q_capacity
         ))
+        self.q_capacity_decay_start_step = int(hparams.get(
+            "subset_irm_q_capacity_decay_start_step", -1
+        ))
+        self.q_capacity_decay_end_step = int(hparams.get(
+            "subset_irm_q_capacity_decay_end_step", -1
+        ))
+        decay_enabled = (self.q_capacity_decay_start_step >= 0 or
+                         self.q_capacity_decay_end_step >= 0)
+        if decay_enabled and not (
+                0 <= self.q_capacity_decay_start_step <
+                self.q_capacity_decay_end_step):
+            raise ValueError(
+                "Q-capacity decay requires 0 <= decay_start_step < "
+                "decay_end_step"
+            )
         self.ssi_mode = hparams.get("subset_irm_ssi_mode", "mmd")
         if self.ssi_mode not in ("none", "mmd", "q_sinkhorn"):
             raise ValueError(
@@ -557,6 +703,36 @@ class MESSISubsetIRM(algorithms.MESSI):
         self.gradient_log_interval = int(hparams.get(
             "subset_irm_gradient_log_interval", 0
         ))
+        self.global_expert_enabled = bool(hparams.get(
+            "subset_irm_global_expert_enabled", False
+        ))
+        self.global_training_mode = hparams.get(
+            "subset_irm_global_training_mode", "joint"
+        )
+        if self.global_training_mode not in ("joint", "separate"):
+            raise ValueError(
+                "subset_irm_global_training_mode must be joint or separate"
+            )
+        if self.global_training_mode == "separate" and not self.global_expert_enabled:
+            raise ValueError("separate global training requires global expert")
+        self.global_logit_weight = float(hparams.get(
+            "subset_irm_global_logit_weight", 1.0
+        ))
+        self.lambda_global_expert = float(hparams.get(
+            "subset_irm_lambda_global_expert", 1.0
+        ))
+        self.lambda_global_irm = float(hparams.get(
+            "subset_irm_lambda_global_irm", 0.0
+        ))
+        self.global_irm_anneal_steps = int(hparams.get(
+            "subset_irm_global_irm_anneal_steps", 0
+        ))
+        self.global_irm_ramp_steps = int(hparams.get(
+            "subset_irm_global_irm_ramp_steps", 0
+        ))
+        self.similarity_log_interval = int(hparams.get(
+            "subset_irm_similarity_log_interval", 100
+        ))
         self.last_diagnostics = {}
 
         if not self.subset_enabled:
@@ -567,6 +743,15 @@ class MESSISubsetIRM(algorithms.MESSI):
             self.num_experts, self.moe_head.expert_dim, self.num_classes,
             shared_classifier=self.moe_head.classifier,
         ).to(next(self.moe_head.parameters()).device)
+        if self.global_expert_enabled:
+            # Same capacity as one subset expert, but it always receives every
+            # source sample and never participates in Q or top-k routing.
+            self.global_expert = copy.deepcopy(self.moe_head.experts[0])
+            self.global_head = copy.deepcopy(self.expert_heads.heads[0])
+            if self.global_training_mode == "separate":
+                # No parameter is shared between the global and subset paths.
+                self.global_featurizer = copy.deepcopy(self.featurizer)
+                self.global_input_proj = copy.deepcopy(self.moe_head.input_proj)
         self.risk_ema = SourceRiskEMA(
             num_domains, self.num_experts,
             beta=float(hparams.get("subset_irm_assignment_ema", 0.9)),
@@ -577,15 +762,46 @@ class MESSISubsetIRM(algorithms.MESSI):
         ))
         self.register_buffer("sirm_active_steps", torch.zeros((), dtype=torch.long))
 
-        trainable = [p for p in chain(
+        subset_trainable = [p for p in chain(
             self.featurizer.parameters(), self.moe_head.parameters(),
-            self.expert_heads.parameters()
+            self.expert_heads.parameters(),
         ) if p.requires_grad]
-        self.optimizer = torch.optim.Adam(
-            trainable,
-            lr=hparams.get("lr", 0.0),
-            weight_decay=hparams.get("weight_decay", 0.0),
-        )
+        global_trainable = [p for p in chain(
+            self.global_featurizer.parameters()
+            if self.global_training_mode == "separate" else [],
+            self.global_input_proj.parameters()
+            if self.global_training_mode == "separate" else [],
+            self.global_expert.parameters() if self.global_expert_enabled else [],
+            self.global_head.parameters() if self.global_expert_enabled else [],
+        ) if p.requires_grad]
+        if self.global_training_mode == "separate":
+            self.optimizer = torch.optim.Adam(
+                subset_trainable,
+                lr=hparams.get("lr", 0.0),
+                weight_decay=hparams.get("weight_decay", 0.0),
+            )
+            self.global_optimizer = torch.optim.Adam(
+                global_trainable,
+                lr=hparams.get("lr", 0.0),
+                weight_decay=hparams.get("weight_decay", 0.0),
+            )
+        else:
+            self.optimizer = torch.optim.Adam(
+                subset_trainable + global_trainable,
+                lr=hparams.get("lr", 0.0),
+                weight_decay=hparams.get("weight_decay", 0.0),
+            )
+
+    def _global_forward(self, x, shared_z_moe=None):
+        if not self.global_expert_enabled:
+            return None, None
+        if self.global_training_mode == "separate":
+            global_z = self.global_featurizer(x)
+            global_z_moe = self.global_input_proj(global_z)
+        else:
+            global_z_moe = shared_z_moe
+        global_features = self.global_expert(global_z_moe)
+        return global_features, self.global_head(global_features)
 
     def _routing_responsibilities(self, dense_pi):
         if (self.router_topk is None or
@@ -593,7 +809,7 @@ class MESSISubsetIRM(algorithms.MESSI):
             return dense_pi
         return per_sample_topk(dense_pi, self.router_topk)
 
-    def _subset_forward(self, x):
+    def _subset_forward_components(self, x):
         z = self.featurizer(x)
         z_moe = self.moe_head.input_proj(z)
         h_stack = torch.stack([
@@ -605,10 +821,24 @@ class MESSISubsetIRM(algorithms.MESSI):
         shared_logits = self.moe_head.classifier(shared_features)
         expert_logits = self.expert_heads(h_stack)
         if self.prediction_mode == "expert_logit_mix":
-            logits = (gamma.unsqueeze(-1) * expert_logits).sum(dim=1)
+            subset_logits = (gamma.unsqueeze(-1) * expert_logits).sum(dim=1)
         else:
-            logits = shared_logits
-        return logits, dense_pi, gamma, h_stack, expert_logits, shared_logits
+            subset_logits = shared_logits
+        if self.global_expert_enabled:
+            global_features, global_logits = self._global_forward(
+                x, shared_z_moe=z_moe
+            )
+            logits = subset_logits + self.global_logit_weight * global_logits
+        else:
+            global_features = None
+            global_logits = None
+            logits = subset_logits
+        return (logits, dense_pi, gamma, h_stack, expert_logits, shared_logits,
+                subset_logits, global_features, global_logits)
+
+    def _subset_forward(self, x):
+        # Preserve the public tuple used by existing diagnostics and tests.
+        return self._subset_forward_components(x)[:6]
 
     def _forward(self, x):
         if not self.subset_enabled:
@@ -654,6 +884,14 @@ class MESSISubsetIRM(algorithms.MESSI):
             ("experts", list(self.moe_head.experts.parameters())),
             ("expert_heads", list(self.expert_heads.parameters())),
         ])
+        if self.global_expert_enabled:
+            groups["global_expert"] = list(self.global_expert.parameters())
+            groups["global_head"] = list(self.global_head.parameters())
+        if self.global_training_mode == "separate":
+            groups["global_backbone"] = list(self.global_featurizer.parameters())
+            groups["global_input_proj"] = list(
+                self.global_input_proj.parameters()
+            )
         result = {}
         for loss_name, loss in losses.items():
             for group_name, parameters in groups.items():
@@ -668,13 +906,27 @@ class MESSISubsetIRM(algorithms.MESSI):
         all_x = torch.cat([x for x, _ in minibatches])
         all_y = torch.cat([y for _, y in minibatches])
         domain_ids = self._get_domain_ids(minibatches)
-        (logits, dense_pi, gamma, h_stack, expert_logits,
-         _) = self._subset_forward(all_x)
+        (logits, dense_pi, gamma, h_stack, expert_logits, _, subset_logits,
+         global_features, global_logits) = self._subset_forward_components(all_x)
 
-        l_cls = F.cross_entropy(logits, all_y)
+        # In separate mode the combined prediction is evaluation-only. The
+        # subset classification loss cannot update global parameters.
+        classification_logits = (
+            subset_logits if self.global_training_mode == "separate" else logits
+        )
+        l_cls = F.cross_entropy(classification_logits, all_y)
+        l_combined_eval = F.cross_entropy(logits, all_y)
         l_expert = expert_predictive_loss(
             expert_logits, all_y, gamma, self.responsibility_detach
         )
+        if self.global_expert_enabled:
+            l_global_expert = F.cross_entropy(global_logits, all_y)
+            l_global_irm = global_irm_penalty(
+                global_logits, all_y, domain_ids, self.num_domains
+            )
+        else:
+            l_global_expert = logits.sum() * 0.0
+            l_global_irm = logits.sum() * 0.0
         l_sp = loss_sparse(dense_pi)
         l_bal = loss_balance(dense_pi)
         l_div = loss_diversity(h_stack) if self.lambda_div != 0 else logits.sum() * 0.0
@@ -695,19 +947,16 @@ class MESSISubsetIRM(algorithms.MESSI):
             )
         else:
             lambda_route = self.lambda_route
-        if step < self.q_capacity_anneal_steps:
-            lambda_q_capacity = 0.0
-        elif self.q_capacity_ramp_steps > 0:
-            lambda_q_capacity = self.lambda_q_capacity * min(
-                1.0,
-                max(0.0, (step - self.q_capacity_anneal_steps) /
-                    self.q_capacity_ramp_steps),
-            )
-        else:
-            lambda_q_capacity = self.lambda_q_capacity
-        if (self.q_capacity_post_step >= 0 and
-                step >= self.q_capacity_post_step):
-            lambda_q_capacity = self.q_capacity_post_lambda
+        lambda_q_capacity = q_capacity_lambda_at_step(
+            step,
+            self.lambda_q_capacity,
+            anneal_steps=self.q_capacity_anneal_steps,
+            ramp_steps=self.q_capacity_ramp_steps,
+            post_step=self.q_capacity_post_step,
+            post_lambda=self.q_capacity_post_lambda,
+            decay_start_step=self.q_capacity_decay_start_step,
+            decay_end_step=self.q_capacity_decay_end_step,
+        )
         if step < self.sirm_anneal_steps:
             lambda_sirm = 0.0
         elif self.sirm_ramp_steps > 0:
@@ -728,6 +977,16 @@ class MESSISubsetIRM(algorithms.MESSI):
             )
         else:
             lambda_ssi = self.lambda_inv
+        if step < self.global_irm_anneal_steps:
+            lambda_global_irm = 0.0
+        elif self.global_irm_ramp_steps > 0:
+            lambda_global_irm = self.lambda_global_irm * min(
+                1.0,
+                max(0.0, (step - self.global_irm_anneal_steps) /
+                    self.global_irm_ramp_steps),
+            )
+        else:
+            lambda_global_irm = self.lambda_global_irm
         if self.assignment_mode == "risk_ema" and step % self.probe_interval == 0:
             probe_risk, probe_valid = self._probe_risk(
                 expert_logits, all_y, domain_ids
@@ -799,7 +1058,7 @@ class MESSISubsetIRM(algorithms.MESSI):
         else:
             l_ssi = logits.sum() * 0.0
 
-        total = (
+        subset_total = (
             l_cls
             + self.lambda_expert * l_expert
             + lambda_route * l_route
@@ -810,9 +1069,16 @@ class MESSISubsetIRM(algorithms.MESSI):
             + lambda_bal * l_bal
             + self.lambda_div * l_div
         )
+        global_total = (
+            self.lambda_global_expert * l_global_expert
+            + lambda_global_irm * l_global_irm
+        )
+        total = subset_total + global_total
         weighted_losses = OrderedDict([
             ("cls", l_cls),
             ("expert", self.lambda_expert * l_expert),
+            ("global_expert", self.lambda_global_expert * l_global_expert),
+            ("global_irm", lambda_global_irm * l_global_irm),
             ("route", lambda_route * l_route),
             ("q_capacity", lambda_q_capacity * l_q_capacity),
             ("sirm", lambda_sirm * l_sirm),
@@ -824,6 +1090,8 @@ class MESSISubsetIRM(algorithms.MESSI):
             gradient_metrics.update(self._gradient_diagnostics(OrderedDict([
                 ("cls", l_cls),
                 ("expert", l_expert),
+                ("global_expert", l_global_expert),
+                ("global_irm", l_global_irm),
                 ("route", l_route),
                 ("q_capacity", l_q_capacity),
                 ("sirm", l_sirm),
@@ -844,25 +1112,71 @@ class MESSISubsetIRM(algorithms.MESSI):
             expert_acc.append(float(
                 expert_logits[mask, expert].argmax(dim=1).eq(all_y[mask]).float().mean().item()
             ) if bool(mask.any()) else 0.0)
+        representation_info = None
+        similarity_metrics = {}
+        if (self.global_expert_enabled and self.similarity_log_interval > 0
+                and step % self.similarity_log_interval == 0):
+            representation_info = expert_representation_diagnostics(
+                h_stack, expert_logits, global_features, global_logits, gamma
+            )
+            subset_cka = representation_info["feature_linear_cka_matrix"][1:, 1:]
+            off_diagonal = ~torch.eye(
+                self.num_experts, device=subset_cka.device, dtype=torch.bool
+            )
+            active = representation_info["subset_selected_count"].gt(0)
+            active_pairs = active.unsqueeze(0) & active.unsqueeze(1) & off_diagonal
+            similarity_metrics = {
+                "similarity_global_subset_cka_mean": float(
+                    representation_info["feature_linear_cka_matrix"][0, 1:].mean().item()
+                ),
+                "similarity_subset_cka_mean": float(
+                    subset_cka[off_diagonal].mean().item()
+                ),
+                "similarity_active_subset_cka_mean": float(
+                    subset_cka[active_pairs].mean().item()
+                ) if bool(active_pairs.any()) else 0.0,
+                "similarity_global_subset_prediction_agreement": float(
+                    representation_info["prediction_agreement_matrix"][0, 1:].mean().item()
+                ),
+                "similarity_min_feature_variance": float(
+                    representation_info["feature_variance"].min().item()
+                ),
+            }
 
         self.optimizer.zero_grad(set_to_none=True)
+        if self.global_training_mode == "separate":
+            self.global_optimizer.zero_grad(set_to_none=True)
         total.backward()
+        if self.global_training_mode == "separate":
+            global_parameters = chain(
+                self.global_featurizer.parameters(),
+                self.global_input_proj.parameters(),
+                self.global_expert.parameters(), self.global_head.parameters(),
+            )
+        elif self.global_expert_enabled:
+            global_parameters = chain(
+                self.global_expert.parameters(), self.global_head.parameters()
+            )
+        else:
+            global_parameters = []
+        optimized_parameters = list(chain(
+            self.featurizer.parameters(), self.moe_head.parameters(),
+            self.expert_heads.parameters(), global_parameters,
+        ))
         total_grad_sq = total.new_zeros(())
-        for parameter in chain(
-                self.featurizer.parameters(), self.moe_head.parameters(),
-                self.expert_heads.parameters()):
+        for parameter in optimized_parameters:
             if parameter.grad is not None:
                 total_grad_sq += parameter.grad.detach().float().square().sum()
         total_grad_norm = float(total_grad_sq.sqrt().item())
         finite_gradients = all(
             parameter.grad is None or bool(torch.isfinite(parameter.grad).all())
-            for parameter in chain(
-                self.featurizer.parameters(), self.moe_head.parameters(),
-                self.expert_heads.parameters())
+            for parameter in optimized_parameters
         )
         if not bool(torch.isfinite(total)) or not finite_gradients:
             raise FloatingPointError(f"non-finite Subset-IRM update at step {step}")
         self.optimizer.step()
+        if self.global_training_mode == "separate":
+            self.global_optimizer.step()
         self.subset_step += 1
 
         active_cell_count = int(sirm_info["active_cells"].sum().item())
@@ -899,10 +1213,20 @@ class MESSISubsetIRM(algorithms.MESSI):
             ),
             **gradient_metrics,
         }
+        if representation_info is not None:
+            self.last_diagnostics.update({
+                f"expert_similarity_{key}": (
+                    value.cpu().tolist() if torch.is_tensor(value) else value
+                )
+                for key, value in representation_info.items()
+            })
         return {
             "loss": float(total.item()),
             "loss_cls": float(l_cls.item()),
+            "loss_combined_eval": float(l_combined_eval.item()),
             "loss_expert": float(l_expert.item()),
+            "loss_global_expert": float(l_global_expert.item()),
+            "loss_global_irm": float(l_global_irm.item()),
             "loss_route": float(l_route.item()),
             "loss_q_capacity": float(l_q_capacity.item()),
             "loss_sirm": float(l_sirm.item()),
@@ -912,6 +1236,12 @@ class MESSISubsetIRM(algorithms.MESSI):
             "loss_div": float(l_div.item()),
             "weighted_loss_cls": float(l_cls.item()),
             "weighted_loss_expert": float((self.lambda_expert * l_expert).item()),
+            "weighted_loss_global_expert": float(
+                (self.lambda_global_expert * l_global_expert).item()
+            ),
+            "weighted_loss_global_irm": float(
+                (lambda_global_irm * l_global_irm).item()
+            ),
             "weighted_loss_route": float((lambda_route * l_route).item()),
             "weighted_loss_q_capacity": float(
                 (lambda_q_capacity * l_q_capacity).item()
@@ -921,12 +1251,19 @@ class MESSISubsetIRM(algorithms.MESSI):
             "weighted_loss_sp": float((lambda_sp * l_sp).item()),
             "weighted_loss_bal": float((lambda_bal * l_bal).item()),
             "effective_lambda_route": float(lambda_route),
+            "effective_lambda_global_irm": float(lambda_global_irm),
             "effective_lambda_q_capacity": float(lambda_q_capacity),
             "effective_lambda_sirm": float(lambda_sirm),
             "effective_lambda_sp": float(lambda_sp),
             "effective_lambda_bal": float(lambda_bal),
             "effective_lambda_ssi": float(lambda_ssi),
             "train_acc": float(logits.argmax(dim=1).eq(all_y).float().mean().item()),
+            "train_subset_only_acc": float(
+                subset_logits.argmax(dim=1).eq(all_y).float().mean().item()
+            ),
+            "train_global_only_acc": float(
+                global_logits.argmax(dim=1).eq(all_y).float().mean().item()
+            ) if self.global_expert_enabled else 0.0,
             "routing_entropy": float(entropy.item()),
             "expert_load_mean": float(load.mean().item()),
             "expert_load_std": float(load.std(unbiased=False).item()),
@@ -945,5 +1282,6 @@ class MESSISubsetIRM(algorithms.MESSI):
             "q_capacity_max_violation": q_capacity_info["max_violation"],
             "q_capacity_violating_expert_count": q_capacity_info["violating_expert_count"],
             "total_grad_norm": total_grad_norm,
+            **similarity_metrics,
             **gradient_metrics,
         }

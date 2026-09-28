@@ -10,8 +10,12 @@ from torch.utils.data import TensorDataset
 from torchvision import transforms
 from torchvision.datasets import MNIST, ImageFolder
 from torchvision.transforms.functional import rotate
-from wilds.datasets.camelyon17_dataset import Camelyon17Dataset
-from wilds.datasets.fmow_dataset import FMoWDataset
+try:
+    from wilds.datasets.camelyon17_dataset import Camelyon17Dataset
+    from wilds.datasets.fmow_dataset import FMoWDataset
+except ImportError:  # Keep ordinary DomainBed datasets usable without WILDS.
+    Camelyon17Dataset = None
+    FMoWDataset = None
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
