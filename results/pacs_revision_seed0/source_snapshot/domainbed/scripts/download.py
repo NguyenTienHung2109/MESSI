@@ -1,0 +1,490 @@
+# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+
+from torchvision.datasets import MNIST
+import xml.etree.ElementTree as ET
+from zipfile import ZipFile
+import argparse
+import tarfile
+import shutil
+import gdown
+import uuid
+import json
+import os
+
+from wilds.datasets.camelyon17_dataset import Camelyon17Dataset
+from wilds.datasets.fmow_dataset import FMoWDataset
+from wilds.datasets.iwildcam_dataset import IWildCamDataset
+
+
+# utils #######################################################################
+
+def stage_path(data_dir, name):
+    full_path = os.path.join(data_dir, name)
+
+    if not os.path.exists(full_path):
+        os.makedirs(full_path)
+
+    return full_path
+
+
+def download_and_extract(url, dst, remove=True):
+    gdown.download(url, dst, quiet=False)
+
+    if dst.endswith(".tar.gz"):
+        tar = tarfile.open(dst, "r:gz")
+        tar.extractall(os.path.dirname(dst))
+        tar.close()
+
+    if dst.endswith(".tar"):
+        tar = tarfile.open(dst, "r:")
+        tar.extractall(os.path.dirname(dst))
+        tar.close()
+
+    if dst.endswith(".zip"):
+        zf = ZipFile(dst, "r")
+        zf.extractall(os.path.dirname(dst))
+        zf.close()
+
+    if remove:
+        os.remove(dst)
+
+
+# VLCS ########################################################################
+
+# Slower, but builds dataset from the original sources
+#
+# def download_vlcs(data_dir):
+#     full_path = stage_path(data_dir, "VLCS")
+#
+#     tmp_path = os.path.join(full_path, "tmp/")
+#     if not os.path.exists(tmp_path):
+#         os.makedirs(tmp_path)
+#
+#     with open("domainbed/misc/vlcs_files.txt", "r") as f:
+#         lines = f.readlines()
+#         files = [line.strip().split() for line in lines]
+#
+#     download_and_extract("http://pjreddie.com/media/files/VOCtrainval_06-Nov-2007.tar",
+#                          os.path.join(tmp_path, "voc2007_trainval.tar"))
+#
+#     download_and_extract("https://drive.google.com/uc?id=1I8ydxaAQunz9R_qFFdBFtw6rFTUW9goz",
+#                          os.path.join(tmp_path, "caltech101.tar.gz"))
+#
+#     download_and_extract("http://groups.csail.mit.edu/vision/Hcontext/data/sun09_hcontext.tar",
+#                          os.path.join(tmp_path, "sun09_hcontext.tar"))
+#
+#     tar = tarfile.open(os.path.join(tmp_path, "sun09.tar"), "r:")
+#     tar.extractall(tmp_path)
+#     tar.close()
+#
+#     for src, dst in files:
+#         class_folder = os.path.join(data_dir, dst)
+#
+#         if not os.path.exists(class_folder):
+#             os.makedirs(class_folder)
+#
+#         dst = os.path.join(class_folder, uuid.uuid4().hex + ".jpg")
+#
+#         if "labelme" in src:
+#             # download labelme from the web
+#             gdown.download(src, dst, quiet=False)
+#         else:
+#             src = os.path.join(tmp_path, src)
+#             shutil.copyfile(src, dst)
+#
+#     shutil.rmtree(tmp_path)
+
+
+def download_vlcs(data_dir):
+    """Download VLCS via the JigenDG (CVPR'19) MediaFire mirror.
+
+    The original DomainBed Google Drive id `1skwblH1_okBwxWxmRsp9_qi15hyPpxg8`
+    is dead. We use the JigenDG mirror and convert its
+    `<ENV>/{train,test,crossval,full}/{0..4}/*.jpg` layout into the
+    DomainBed-expected `<env>/<class>/*.jpg` layout. We take `full + test`,
+    which is the canonical union of unique images (`full == train + crossval`).
+    """
+    import re
+    import urllib.request
+
+    full_path = stage_path(data_dir, "VLCS")
+    tar_path  = os.path.join(data_dir, "vlcs.tar.gz")
+    raw_root  = os.path.join(data_dir, "VLCS_raw")
+
+    # 1. Resolve a fresh direct-download URL — MediaFire tokens expire hourly,
+    #    so we must scrape the share page each time.
+    share_url = "https://www.mediafire.com/file/7yv132lgn1v267r/vlcs.tar.gz/file"
+    req = urllib.request.Request(share_url, headers={"User-Agent": "Mozilla/5.0"})
+    html = urllib.request.urlopen(req, timeout=60).read().decode("utf-8", "ignore")
+    m = re.search(r"https://download\d+\.mediafire\.com/\S+?/vlcs\.tar\.gz", html)
+    if not m:
+        raise RuntimeError(
+            "Could not extract direct-download URL from MediaFire share page. "
+            "Visit {} in a browser, download manually, and place the file at {}."
+            .format(share_url, tar_path))
+    direct_url = m.group(0)
+    print("[VLCS] direct download URL:", direct_url)
+
+    # 2. Download (urllib handles the binary stream; gdown chokes on non-Drive).
+    if not os.path.exists(tar_path):
+        print("[VLCS] downloading {} ...".format(tar_path))
+        with urllib.request.urlopen(direct_url, timeout=600) as r, \
+             open(tar_path, "wb") as f:
+            shutil.copyfileobj(r, f)
+    print("[VLCS] archive size: {:.1f} MB".format(os.path.getsize(tar_path) / 1e6))
+
+    # 3. Extract to staging dir.
+    if os.path.isdir(raw_root):
+        shutil.rmtree(raw_root)
+    os.makedirs(raw_root)
+    with tarfile.open(tar_path, "r:gz") as tar:
+        tar.extractall(raw_root)
+    src_root = os.path.join(raw_root, "VLCS")
+    if not os.path.isdir(src_root):
+        raise RuntimeError("Expected VLCS/ inside archive, not found at " + src_root)
+
+    # 4. Restructure JigenDG → DomainBed layout.
+    env_map = {"CALTECH": "Caltech101", "LABELME": "LabelMe",
+               "PASCAL":  "VOC2007",    "SUN":     "SUN09"}
+    class_map = {"0": "bird", "1": "car", "2": "chair",
+                 "3": "dog", "4": "person"}
+    keep_splits = ("full", "test")   # union = all unique images
+    counts = {dst: 0 for dst in env_map.values()}
+    for src_env, dst_env in env_map.items():
+        for split in keep_splits:
+            split_dir = os.path.join(src_root, src_env, split)
+            if not os.path.isdir(split_dir):
+                continue
+            for class_idx, class_name in class_map.items():
+                src_cls = os.path.join(split_dir, class_idx)
+                if not os.path.isdir(src_cls):
+                    continue
+                dst_cls = os.path.join(full_path, dst_env, class_name)
+                os.makedirs(dst_cls, exist_ok=True)
+                for fname in os.listdir(src_cls):
+                    # Prefix split to dodge same-name collisions across splits.
+                    shutil.copy2(
+                        os.path.join(src_cls, fname),
+                        os.path.join(dst_cls, "{}_{}".format(split, fname)),
+                    )
+                    counts[dst_env] += 1
+
+    # 5. Clean up + report.
+    shutil.rmtree(raw_root)
+    os.remove(tar_path)
+    print("[VLCS] done. Layout: {}".format(full_path))
+    for env, n in counts.items():
+        print("       {:<11s} {:>6d} images".format(env, n))
+    print("       TOTAL       {:>6d}  (reference: 10729)".format(sum(counts.values())))
+
+
+# MNIST #######################################################################
+
+def download_mnist(data_dir):
+    # Original URL: http://yann.lecun.com/exdb/mnist/
+    full_path = stage_path(data_dir, "MNIST")
+    MNIST(full_path, download=True)
+
+
+# PACS ########################################################################
+
+def download_pacs(data_dir):
+    # Original URL: http://www.eecs.qmul.ac.uk/~dl307/project_iccv2017
+    os.makedirs(data_dir, exist_ok=True)
+    full_path = os.path.join(data_dir, "PACS")
+
+    if os.path.isdir(full_path) and any(os.scandir(full_path)):
+        print(f"PACS already exists at {full_path}, skipping download.")
+        return
+
+    pacs_zip = os.path.join(data_dir, "PACS.zip")
+    if os.path.exists(pacs_zip):
+        print(f"Using existing archive: {pacs_zip}")
+        zf = ZipFile(pacs_zip, "r")
+        zf.extractall(os.path.dirname(pacs_zip))
+        zf.close()
+        os.remove(pacs_zip)
+    else:
+        try:
+            download_and_extract("https://drive.google.com/uc?id=1JFr8f805nMUelQWWmfnJR3y4_SYoN5Pd",
+                                 pacs_zip)
+        except Exception as e:
+            print(f"Primary PACS source failed: {e}")
+            print("Falling back to Hugging Face dataset mirror: flwrlabs/pacs")
+            download_pacs_from_hf(full_path)
+            return
+
+    src_kfold = os.path.join(data_dir, "kfold")
+    if not os.path.exists(src_kfold):
+        raise RuntimeError(
+            f"Expected extracted folder not found: {src_kfold}. "
+            "The downloaded file may be incomplete or from a different PACS source."
+        )
+
+    if os.path.isdir(full_path) and not any(os.scandir(full_path)):
+        os.rmdir(full_path)
+
+    os.rename(src_kfold, full_path)
+
+
+def download_pacs_from_hf(full_path):
+    try:
+        from datasets import load_dataset
+    except ImportError as e:
+        raise RuntimeError(
+            "Hugging Face fallback requires the `datasets` package.\n"
+            "Install it with: pip install datasets"
+        ) from e
+
+    dataset = load_dataset("flwrlabs/pacs", split="train")
+    label_names = dataset.features["label"].names
+
+    os.makedirs(full_path, exist_ok=True)
+    for i, sample in enumerate(dataset):
+        domain = sample["domain"]
+        class_name = label_names[sample["label"]]
+        image = sample["image"]
+
+        out_dir = os.path.join(full_path, domain, class_name)
+        os.makedirs(out_dir, exist_ok=True)
+        out_file = os.path.join(out_dir, f"{i:06d}.jpg")
+        image.convert("RGB").save(out_file, format="JPEG", quality=95)
+        
+
+# Office-Home #################################################################
+
+def download_office_home(data_dir):
+    # Original URL: http://hemanthdv.org/OfficeHome-Dataset/
+    full_path = stage_path(data_dir, "office_home")
+
+    download_and_extract("https://drive.google.com/uc?id=1uY0pj7oFsjMxRwaD3Sxy0jgel0fsYXLC",
+                         os.path.join(data_dir, "office_home.zip"))
+
+    os.rename(os.path.join(data_dir, "OfficeHomeDataset_10072016"),
+              full_path)
+
+
+# DomainNET ###################################################################
+
+def download_domain_net(data_dir):
+    # Original URL: http://ai.bu.edu/M3SDA/
+    full_path = stage_path(data_dir, "domain_net")
+
+    urls = [
+        "http://csr.bu.edu/ftp/visda/2019/multi-source/groundtruth/clipart.zip",
+        "http://csr.bu.edu/ftp/visda/2019/multi-source/infograph.zip",
+        "http://csr.bu.edu/ftp/visda/2019/multi-source/groundtruth/painting.zip",
+        "http://csr.bu.edu/ftp/visda/2019/multi-source/quickdraw.zip",
+        "http://csr.bu.edu/ftp/visda/2019/multi-source/real.zip",
+        "http://csr.bu.edu/ftp/visda/2019/multi-source/sketch.zip"
+    ]
+
+    for url in urls:
+        download_and_extract(url, os.path.join(full_path, url.split("/")[-1]))
+
+    with open("domainbed/misc/domain_net_duplicates.txt", "r") as f:
+        for line in f.readlines():
+            try:
+                os.remove(os.path.join(full_path, line.strip()))
+            except OSError:
+                pass
+
+
+# TerraIncognita ##############################################################
+
+def download_terra_incognita(data_dir):
+    # Original URL: https://beerys.github.io/CaltechCameraTraps/
+    # New URL: http://lila.science/datasets/caltech-camera-traps
+
+    full_path = stage_path(data_dir, "terra_incognita")
+
+    download_and_extract(
+        "https://lilablobssc.blob.core.windows.net/caltechcameratraps/eccv_18_all_images_sm.tar.gz",
+        os.path.join(full_path, "terra_incognita_images.tar.gz"))
+
+    download_and_extract(
+        "https://lilablobssc.blob.core.windows.net/caltechcameratraps/labels/caltech_camera_traps.json.zip",
+        os.path.join(full_path, "caltech_camera_traps.json.zip"))
+
+    include_locations = ["38", "46", "100", "43"]
+
+    include_categories = [
+        "bird", "bobcat", "cat", "coyote", "dog", "empty", "opossum", "rabbit",
+        "raccoon", "squirrel"
+    ]
+
+    images_folder = os.path.join(full_path, "eccv_18_all_images_sm/")
+    annotations_file = os.path.join(full_path, "caltech_images_20210113.json")
+    destination_folder = full_path
+
+    stats = {}
+
+    if not os.path.exists(destination_folder):
+        os.mkdir(destination_folder)
+
+    with open(annotations_file, "r") as f:
+        data = json.load(f)
+
+    category_dict = {}
+    for item in data['categories']:
+        category_dict[item['id']] = item['name']
+
+    for image in data['images']:
+        image_location = image['location']
+
+        if image_location not in include_locations:
+            continue
+
+        loc_folder = os.path.join(destination_folder,
+                                  'location_' + str(image_location) + '/')
+
+        if not os.path.exists(loc_folder):
+            os.mkdir(loc_folder)
+
+        image_id = image['id']
+        image_fname = image['file_name']
+
+        for annotation in data['annotations']:
+            if annotation['image_id'] == image_id:
+                if image_location not in stats:
+                    stats[image_location] = {}
+
+                category = category_dict[annotation['category_id']]
+
+                if category not in include_categories:
+                    continue
+
+                if category not in stats[image_location]:
+                    stats[image_location][category] = 0
+                else:
+                    stats[image_location][category] += 1
+
+                loc_cat_folder = os.path.join(loc_folder, category + '/')
+
+                if not os.path.exists(loc_cat_folder):
+                    os.mkdir(loc_cat_folder)
+
+                dst_path = os.path.join(loc_cat_folder, image_fname)
+                src_path = os.path.join(images_folder, image_fname)
+
+                shutil.copyfile(src_path, dst_path)
+
+    shutil.rmtree(images_folder)
+    os.remove(annotations_file)
+
+
+# SVIRO #################################################################
+
+def download_sviro(data_dir):
+    # Original URL: https://sviro.kl.dfki.de
+    full_path = stage_path(data_dir, "sviro")
+
+    download_and_extract("https://sviro.kl.dfki.de/?wpdmdl=1731",
+                         os.path.join(data_dir, "sviro_grayscale_rectangle_classification.zip"))
+
+    os.rename(os.path.join(data_dir, "SVIRO_DOMAINBED"),
+              full_path)
+
+
+# iWildCam (WILDS) ############################################################
+
+def download_iwildcam(data_dir):
+    """
+    iWildCam (WILDS): camera trap species classification, ~324 location domains.
+    ~12 GB download → extracts to <data_dir>/iwildcam_v2.0/
+    """
+    IWildCamDataset(root_dir=data_dir, download=True)
+
+
+def download_metashift(data_dir):
+    """
+    MetaShift: extracts only the image IDs referenced by existing split CSVs
+    under <data_dir>/metashift/splits/. Run scripts/metashift_build_splits.py
+    first to generate the manifests; this function then performs the
+    targeted extraction from the GQA images.zip archive.
+
+    Sequence:
+      1. Fetch metadata pickle (~15 MB) into <data_dir>/metashift/meta_data/.
+      2. If <data_dir>/metashift/raw/gqa_images.zip is missing, download it
+         (~21.8 GB) from the Stanford GQA mirror.
+      3. Read every CSV in <data_dir>/metashift/splits/, collect the union
+         of vg_image_id values, and extract only those into
+         <data_dir>/metashift/raw/images/.
+      4. Optionally delete the zip after extraction (controlled by
+         METASHIFT_KEEP_ZIP env var; default deletes).
+    """
+    import os
+    import pickle
+    import urllib.request
+    import zipfile
+    from glob import glob
+
+    base = os.path.join(data_dir, "metashift")
+    meta_dir = os.path.join(base, "meta_data")
+    raw_dir = os.path.join(base, "raw")
+    img_dir = os.path.join(raw_dir, "images")
+    splits_dir = os.path.join(base, "splits")
+    os.makedirs(meta_dir, exist_ok=True)
+    os.makedirs(img_dir, exist_ok=True)
+
+    pkl_path = os.path.join(meta_dir, "full-candidate-subsets.pkl")
+    if not os.path.exists(pkl_path):
+        url = "https://github.com/Weixin-Liang/MetaShift/raw/main/dataset/meta_data/full-candidate-subsets.pkl"
+        print(f"Fetching metadata pickle from {url}")
+        urllib.request.urlretrieve(url, pkl_path)
+
+    csv_paths = glob(os.path.join(splits_dir, "*", "*.csv"))
+    if not csv_paths:
+        raise RuntimeError(
+            f"No split CSVs under {splits_dir}. Run scripts/metashift_build_splits.py first."
+        )
+    needed = set()
+    import csv as csvmod
+    for p in csv_paths:
+        with open(p) as f:
+            r = csvmod.DictReader(f)
+            for row in r:
+                needed.add(int(row["vg_image_id"]))
+    print(f"Need {len(needed)} unique image ids across {len(csv_paths)} splits.")
+
+    have = {int(os.path.splitext(os.path.basename(f))[0])
+            for f in os.listdir(img_dir) if f.endswith(".jpg")}
+    missing = needed - have
+    print(f"Already have: {len(have & needed)}; missing: {len(missing)}")
+    if not missing:
+        return
+
+    zip_path = os.path.join(raw_dir, "gqa_images.zip")
+    if not os.path.exists(zip_path):
+        url = "https://downloads.cs.stanford.edu/nlp/data/gqa/images.zip"
+        print(f"Downloading GQA images.zip (~21.8 GB) to {zip_path}")
+        os.system(f'wget -c -O "{zip_path}" "{url}"')
+
+    with zipfile.ZipFile(zip_path) as zf:
+        for vid in sorted(missing):
+            arcname = f"images/{vid}.jpg"
+            try:
+                with zf.open(arcname) as src, open(os.path.join(img_dir, f"{vid}.jpg"), "wb") as dst:
+                    dst.write(src.read())
+            except KeyError:
+                print(f"WARN: {arcname} missing in zip")
+
+    if not os.environ.get("METASHIFT_KEEP_ZIP"):
+        print(f"Deleting {zip_path} (set METASHIFT_KEEP_ZIP=1 to retain)")
+        os.remove(zip_path)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Download datasets')
+    parser.add_argument('--data_dir', type=str, required=True)
+    args = parser.parse_args()
+
+    # download_mnist(args.data_dir)
+    download_pacs(args.data_dir)
+    # download_office_home(args.data_dir)
+    # download_domain_net(args.data_dir)
+    # download_vlcs(args.data_dir)
+    # download_terra_incognita(args.data_dir)
+    # download_sviro(args.data_dir)
+    # Camelyon17Dataset(root_dir=args.data_dir, download=True)
+    # FMoWDataset(root_dir=args.data_dir, download=True)

@@ -8,6 +8,10 @@ Wondering why GMoEs have astonishing performance? 🤯 Let's investigate the gen
 
 ## Predictive binary subset supports
 
+The router-independent revision with predictive-information thresholds is
+documented in [the v2 guide](docs/predictive_support_v2.md), including isolated
+ablations and the seed-0 PACS protocol.
+
 The new `MESSI_Support` method learns overlapping domain supports with local
 expert supervision, routing admissibility and conditional MMD. See the
 [implementation and running guide](docs/predictive_support.md) for PACS /

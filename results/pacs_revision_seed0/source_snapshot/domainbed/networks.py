@@ -1,0 +1,319 @@
+# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+
+import copy
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torchvision.models
+
+from domainbed.lib import wide_resnet
+from domainbed import vision_transformer
+
+
+def remove_batch_norm_from_resnet(model):
+    fuse = torch.nn.utils.fusion.fuse_conv_bn_eval
+    model.eval()
+
+    model.conv1 = fuse(model.conv1, model.bn1)
+    model.bn1 = Identity()
+
+    for name, module in model.named_modules():
+        if name.startswith("layer") and len(name) == 6:
+            for b, bottleneck in enumerate(module):
+                for name2, module2 in bottleneck.named_modules():
+                    if name2.startswith("conv"):
+                        bn_name = "bn" + name2[-1]
+                        setattr(bottleneck, name2,
+                                fuse(module2, getattr(bottleneck, bn_name)))
+                        setattr(bottleneck, bn_name, Identity())
+                if isinstance(bottleneck.downsample, torch.nn.Sequential):
+                    bottleneck.downsample[0] = fuse(bottleneck.downsample[0],
+                                                    bottleneck.downsample[1])
+                    bottleneck.downsample[1] = Identity()
+    model.train()
+    return model
+
+
+class Identity(nn.Module):
+    """An identity layer"""
+    def __init__(self):
+        super(Identity, self).__init__()
+
+    def forward(self, x):
+        return x
+
+
+class MLP(nn.Module):
+    """Just  an MLP"""
+    def __init__(self, n_inputs, n_outputs, hparams):
+        super(MLP, self).__init__()
+        self.input = nn.Linear(n_inputs, hparams['mlp_width'])
+        self.dropout = nn.Dropout(hparams['mlp_dropout'])
+        self.hiddens = nn.ModuleList([
+            nn.Linear(hparams['mlp_width'], hparams['mlp_width'])
+            for _ in range(hparams['mlp_depth']-2)])
+        self.output = nn.Linear(hparams['mlp_width'], n_outputs)
+        self.n_outputs = n_outputs
+
+    def forward(self, x):
+        x = self.input(x)
+        x = self.dropout(x)
+        x = F.relu(x)
+        for hidden in self.hiddens:
+            x = hidden(x)
+            x = self.dropout(x)
+            x = F.relu(x)
+        x = self.output(x)
+        return x
+
+
+class ResNet(torch.nn.Module):
+    """ResNet with the softmax chopped off and the batchnorm frozen"""
+    def __init__(self, input_shape, hparams):
+        super(ResNet, self).__init__()
+        if hparams['resnet18']:
+            self.network = torchvision.models.resnet18(pretrained=True)
+            self.n_outputs = 512
+        else:
+            self.network = torchvision.models.resnet50(pretrained=True)
+            self.n_outputs = 2048
+
+        # self.network = remove_batch_norm_from_resnet(self.network)
+
+        # adapt number of channels
+        nc = input_shape[0]
+        if nc != 3:
+            tmp = self.network.conv1.weight.data.clone()
+
+            self.network.conv1 = nn.Conv2d(
+                nc, 64, kernel_size=(7, 7),
+                stride=(2, 2), padding=(3, 3), bias=False)
+
+            for i in range(nc):
+                self.network.conv1.weight.data[:, i, :, :] = tmp[:, i % 3, :, :]
+
+        # save memory
+        del self.network.fc
+        self.network.fc = Identity()
+
+        self.freeze_bn()
+        self.hparams = hparams
+        self.dropout = nn.Dropout(hparams['resnet_dropout'])
+
+    def forward(self, x):
+        """Encode x into a feature vector of size n_outputs."""
+        return self.dropout(self.network(x))
+
+    def train(self, mode=True):
+        """
+        Override the default train() to freeze the BN parameters
+        """
+        super().train(mode)
+        self.freeze_bn()
+
+    def freeze_bn(self):
+        for m in self.network.modules():
+            if isinstance(m, nn.BatchNorm2d):
+                m.eval()
+
+
+class MNIST_CNN(nn.Module):
+    """
+    Hand-tuned architecture for MNIST.
+    Weirdness I've noticed so far with this architecture:
+    - adding a linear layer after the mean-pool in features hurts
+        RotatedMNIST-100 generalization severely.
+    """
+    n_outputs = 128
+
+    def __init__(self, input_shape):
+        super(MNIST_CNN, self).__init__()
+        self.conv1 = nn.Conv2d(input_shape[0], 64, 3, 1, padding=1)
+        self.conv2 = nn.Conv2d(64, 128, 3, stride=2, padding=1)
+        self.conv3 = nn.Conv2d(128, 128, 3, 1, padding=1)
+        self.conv4 = nn.Conv2d(128, 128, 3, 1, padding=1)
+
+        self.bn0 = nn.GroupNorm(8, 64)
+        self.bn1 = nn.GroupNorm(8, 128)
+        self.bn2 = nn.GroupNorm(8, 128)
+        self.bn3 = nn.GroupNorm(8, 128)
+
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = F.relu(x)
+        x = self.bn0(x)
+
+        x = self.conv2(x)
+        x = F.relu(x)
+        x = self.bn1(x)
+
+        x = self.conv3(x)
+        x = F.relu(x)
+        x = self.bn2(x)
+
+        x = self.conv4(x)
+        x = F.relu(x)
+        x = self.bn3(x)
+
+        x = self.avgpool(x)
+        x = x.view(len(x), -1)
+        return x
+
+
+class WILDS_CNN(nn.Module):
+    """From-scratch CNN cho input 224×224 (WILDS-style datasets).
+
+    Cùng style với MNIST_CNN: plain Conv → ReLU → GroupNorm, không residual,
+    không pretrain. 6 conv blocks scale dần channels, AdaptiveAvgPool ra
+    n_outputs=256. ~1.7M params (~1/15 ResNet50). GroupNorm thay BN vì BN
+    bị poisoned khi minibatch chứa nhiều domain khác phân bố.
+    """
+    n_outputs = 256
+
+    def __init__(self, input_shape):
+        super().__init__()
+        nc = input_shape[0]
+        self.conv1 = nn.Conv2d(nc, 32, 3, stride=2, padding=1)
+        self.conv2 = nn.Conv2d(32, 64, 3, stride=2, padding=1)
+        self.conv3 = nn.Conv2d(64, 128, 3, stride=2, padding=1)
+        self.conv4 = nn.Conv2d(128, 256, 3, stride=2, padding=1)
+        self.conv5 = nn.Conv2d(256, 256, 3, stride=2, padding=1)
+        self.conv6 = nn.Conv2d(256, 256, 3, stride=1, padding=1)
+
+        self.bn1 = nn.GroupNorm(8, 32)
+        self.bn2 = nn.GroupNorm(8, 64)
+        self.bn3 = nn.GroupNorm(8, 128)
+        self.bn4 = nn.GroupNorm(8, 256)
+        self.bn5 = nn.GroupNorm(8, 256)
+        self.bn6 = nn.GroupNorm(8, 256)
+
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+
+    def forward(self, x):
+        x = F.relu(self.conv1(x)); x = self.bn1(x)
+        x = F.relu(self.conv2(x)); x = self.bn2(x)
+        x = F.relu(self.conv3(x)); x = self.bn3(x)
+        x = F.relu(self.conv4(x)); x = self.bn4(x)
+        x = F.relu(self.conv5(x)); x = self.bn5(x)
+        x = F.relu(self.conv6(x)); x = self.bn6(x)
+        x = self.avgpool(x).view(len(x), -1)
+        return x
+
+
+class ContextNet(nn.Module):
+    def __init__(self, input_shape):
+        super(ContextNet, self).__init__()
+
+        # Keep same dimensions
+        padding = (5 - 1) // 2
+        self.context_net = nn.Sequential(
+            nn.Conv2d(input_shape[0], 64, 5, padding=padding),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, 5, padding=padding),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Conv2d(64, 1, 5, padding=padding),
+        )
+
+    def forward(self, x):
+        return self.context_net(x)
+
+
+class PositionalEmbedding1D(nn.Module):
+    """Adds (optionally learned) positional embeddings to the inputs."""
+
+    def __init__(self, seq_len, dim):
+        super().__init__()
+        self.pos_embedding = nn.Parameter(torch.zeros(1, seq_len, dim))
+
+    def forward(self, x):
+        """Input has shape `(batch_size, seq_len, emb_dim)`"""
+        return x + self.pos_embedding
+    
+
+class ViTFeaturizer(nn.Module):
+    """Vanilla ViT (DeiT) featurizer — no MoE. Returns CLS token embedding."""
+    def __init__(self, model_name, hparams=None, input_shape=None):
+        super().__init__()
+        if not hasattr(vision_transformer, model_name):
+            raise ValueError(f"Unknown ViT model: {model_name}")
+        factory = getattr(vision_transformer, model_name)
+        hparams = hparams or {}
+        img_size = int(input_shape[1]) if input_shape is not None else 224
+        in_chans = int(input_shape[0]) if input_shape is not None else 3
+        if img_size != 224 or in_chans != 3:
+            print(f"[ViTFeaturizer:{model_name}] shape override "
+                  f"(img_size={img_size}, in_chans={in_chans}); "
+                  f"pretrained positional embeddings will be resized when "
+                  f"supported by the model loader.")
+        # num_classes=0 → head is Identity, so forward() returns CLS features.
+        # moe_layers=None → all blocks use the dense MLP path (no MoE).
+        self.network = factory(
+            pretrained=True,
+            num_classes=0,
+            img_size=img_size,
+            in_chans=in_chans,
+        )
+        self.n_outputs = self.network.embed_dim
+        self.hparams = hparams
+
+    def forward(self, x):
+        # ViT.forward returns CLS embedding because num_classes=0 makes
+        # self.head an Identity.
+        return self.network(x)
+
+
+def Featurizer(input_shape, hparams=None):
+    """Auto-select an appropriate featurizer for the given input shape."""
+    if len(input_shape) == 1:
+        return MLP(input_shape[0], hparams["mlp_width"], hparams)
+    elif input_shape[1:3] == (28, 28):
+        return MNIST_CNN(input_shape)
+    elif input_shape[1:3] == (32, 32):
+        return wide_resnet.Wide_ResNet(input_shape, 16, 2, 0.)
+
+    model_name = (hparams or {}).get('model', '')
+    if model_name.startswith('deit_') or model_name.startswith('vit_'):
+        return ViTFeaturizer(model_name, hparams, input_shape=input_shape)
+    if model_name == 'cnn':
+        return WILDS_CNN(input_shape)
+    if model_name in ('', 'resnet50', 'resnet18'):
+        return ResNet(input_shape, hparams)
+    raise NotImplementedError
+
+
+def Classifier(in_features, out_features, is_nonlinear=False):
+    if is_nonlinear:
+        return torch.nn.Sequential(
+            torch.nn.Linear(in_features, in_features // 2),
+            torch.nn.ReLU(),
+            torch.nn.Linear(in_features // 2, in_features // 4),
+            torch.nn.ReLU(),
+            torch.nn.Linear(in_features // 4, out_features))
+    else:
+        return torch.nn.Linear(in_features, out_features)
+
+
+class WholeFish(nn.Module):
+    def __init__(self, input_shape, num_classes, hparams, weights=None):
+        super(WholeFish, self).__init__()
+        featurizer = Featurizer(input_shape, hparams)
+        classifier = Classifier(
+            featurizer.n_outputs,
+            num_classes,
+            hparams['nonlinear_classifier'])
+        self.net = nn.Sequential(
+            featurizer, classifier
+        )
+        if weights is not None:
+            self.load_state_dict(copy.deepcopy(weights))
+
+    def reset_weights(self, weights):
+        self.load_state_dict(copy.deepcopy(weights))
+
+    def forward(self, x):
+        return self.net(x)

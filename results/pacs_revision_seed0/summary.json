@@ -1,0 +1,33 @@
+{
+  "v2_learned": {
+    "seeds": {
+      "0": {
+        "0": {
+          "target_accuracy": 0.876953125,
+          "selected_step": 4900,
+          "source_selected_accuracy": 0.9852496596441828
+        },
+        "1": {
+          "target_accuracy": 0.8306313993174061,
+          "selected_step": 3200,
+          "source_selected_accuracy": 0.9802705864803182
+        },
+        "2": {
+          "target_accuracy": 0.9892215568862276,
+          "selected_step": 2100,
+          "source_selected_accuracy": 0.97105032561015
+        },
+        "3": {
+          "target_accuracy": 0.7767879867650802,
+          "selected_step": 3600,
+          "source_selected_accuracy": 0.9836267844225035
+        }
+      }
+    },
+    "complete_seed_means": {
+      "0": 0.8683985169921785
+    },
+    "mean_accuracy": 0.8683985169921785,
+    "std_across_seed_means": null
+  }
+}

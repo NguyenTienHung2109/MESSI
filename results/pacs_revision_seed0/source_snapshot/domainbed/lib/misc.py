@@ -1,0 +1,360 @@
+# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+
+"""
+Things that don't belong anywhere else
+"""
+
+import hashlib
+import operator
+import sys
+from collections import Counter
+from collections import OrderedDict
+from datetime import datetime
+from numbers import Number
+
+import numpy as np
+import torch
+
+
+def merge_dictlist(dictlist):
+    """Merge list of dicts into dict of lists, by grouping same key.
+    """
+    ret = {
+        k: []
+        for k in dictlist[0].keys()
+    }
+    for dic in dictlist:
+        for data_key, v in dic.items():
+            ret[data_key].append(v)
+    return ret
+
+
+def index_conditional_iterate(skip_condition, iterable, index):
+    for i, x in enumerate(iterable):
+        if skip_condition(i):
+            continue
+
+        if index:
+            yield i, x
+        else:
+            yield x
+
+
+class SplitIterator:
+    def __init__(self, test_envs):
+        self.test_envs = test_envs
+
+    def train(self, iterable, index=False):
+        return index_conditional_iterate(lambda idx: idx in self.test_envs, iterable, index)
+
+    def test(self, iterable, index=False):
+        return index_conditional_iterate(lambda idx: idx not in self.test_envs, iterable, index)
+
+
+def timestamp(fmt="%y%m%d_%H-%M-%S"):
+    return datetime.now().strftime(fmt)
+
+
+def l2_between_dicts(dict_1, dict_2):
+    assert len(dict_1) == len(dict_2)
+    dict_1_values = [dict_1[key] for key in sorted(dict_1.keys())]
+    dict_2_values = [dict_2[key] for key in sorted(dict_1.keys())]
+    return (
+            torch.cat(tuple([t.view(-1) for t in dict_1_values])) -
+            torch.cat(tuple([t.view(-1) for t in dict_2_values]))
+    ).pow(2).mean()
+
+
+class MovingAverage:
+
+    def __init__(self, ema, oneminusema_correction=True):
+        self.ema = ema
+        self.ema_data = {}
+        self._updates = 0
+        self._oneminusema_correction = oneminusema_correction
+
+    def update(self, dict_data):
+        ema_dict_data = {}
+        for name, data in dict_data.items():
+            data = data.view(1, -1)
+            if self._updates == 0:
+                previous_data = torch.zeros_like(data)
+            else:
+                previous_data = self.ema_data[name]
+
+            ema_data = self.ema * previous_data + (1 - self.ema) * data
+            if self._oneminusema_correction:
+                # correction by 1/(1 - self.ema)
+                # so that the gradients amplitude backpropagated in data is independent of self.ema
+                ema_dict_data[name] = ema_data / (1 - self.ema)
+            else:
+                ema_dict_data[name] = ema_data
+            self.ema_data[name] = ema_data.clone().detach()
+
+        self._updates += 1
+        return ema_dict_data
+
+
+def make_weights_for_balanced_classes(dataset):
+    counts = Counter()
+    classes = []
+    for _, y in dataset:
+        y = int(y)
+        counts[y] += 1
+        classes.append(y)
+
+    n_classes = len(counts)
+
+    weight_per_class = {}
+    for y in counts:
+        weight_per_class[y] = 1 / (counts[y] * n_classes)
+
+    weights = torch.zeros(len(dataset))
+    for i, y in enumerate(classes):
+        weights[i] = weight_per_class[int(y)]
+
+    return weights
+
+
+def pdb():
+    sys.stdout = sys.__stdout__
+    import pdb
+    print("Launching PDB, enter 'n' to step to parent function.")
+    pdb.set_trace()
+
+
+def seed_hash(*args):
+    """
+    Derive an integer hash from all args, for use as a random seed.
+    """
+    args_str = str(args)
+    return int(hashlib.md5(args_str.encode("utf-8")).hexdigest(), 16) % (2 ** 31)
+
+
+def print_separator():
+    print("=" * 80)
+
+
+def print_row(row, colwidth=10, latex=False):
+    if latex:
+        sep = " & "
+        end_ = "\\\\"
+    else:
+        sep = "  "
+        end_ = ""
+
+    def format_val(x):
+        if np.issubdtype(type(x), np.floating):
+            x = "{:.4f}".format(x)
+        return str(x).ljust(colwidth)[:colwidth]
+
+    print(sep.join([format_val(x) for x in row]), end_)
+
+
+class _SplitDataset(torch.utils.data.Dataset):
+    """Used by split_dataset"""
+
+    def __init__(self, underlying_dataset, keys):
+        super(_SplitDataset, self).__init__()
+        self.underlying_dataset = underlying_dataset
+        self.keys = keys
+
+    def __getitem__(self, key):
+        return self.underlying_dataset[self.keys[key]]
+
+    def __len__(self):
+        return len(self.keys)
+
+
+def split_dataset(dataset, n, seed=0):
+    """
+    Return a pair of datasets corresponding to a random split of the given
+    dataset, with n datapoints in the first dataset and the rest in the last,
+    using the given random seed.
+
+    If `dataset` exposes a `pre_split` attribute as {'out': [...], 'in': [...]}
+    of index lists, that split is honored verbatim and `n` / `seed` are ignored
+    (used by class-stratified pre-computed splits, e.g. MetaShift_K).
+    """
+    pre = getattr(dataset, "pre_split", None)
+    if pre is not None and "in" in pre and "out" in pre:
+        return _SplitDataset(dataset, list(pre["out"])), _SplitDataset(dataset, list(pre["in"]))
+    assert (n <= len(dataset))
+    keys = list(range(len(dataset)))
+    np.random.RandomState(seed).shuffle(keys)
+    keys_1 = keys[:n]
+    keys_2 = keys[n:]
+    return _SplitDataset(dataset, keys_1), _SplitDataset(dataset, keys_2)
+
+
+def stratified_subsample_indices(labels, n_target, seed):
+    """Return n_target indices into `labels` with class proportions preserved.
+
+    Per-class quota = floor(n_target * count_c / total). Remainder slots are
+    distributed by largest-remainder. Within each class, samples are picked
+    by a seeded RandomState shuffle. Returns a sorted Python list of indices.
+    """
+    labels = np.asarray(labels)
+    n = len(labels)
+    if n_target >= n:
+        return list(range(n))
+    rng = np.random.RandomState(seed)
+
+    classes, counts = np.unique(labels, return_counts=True)
+    raw = n_target * counts / n
+    quotas = np.floor(raw).astype(int)
+    remainder = n_target - int(quotas.sum())
+    if remainder > 0:
+        residuals = raw - quotas
+        order = np.argsort(-residuals)
+        for i in order[:remainder]:
+            quotas[i] += 1
+    quotas = np.minimum(quotas, counts)
+
+    keep = []
+    for cls, q in zip(classes, quotas):
+        if q <= 0:
+            continue
+        idx = np.where(labels == cls)[0]
+        rng.shuffle(idx)
+        keep.extend(int(x) for x in idx[:q])
+    return sorted(keep)
+
+
+def random_pairs_of_minibatches(minibatches):
+    perm = torch.randperm(len(minibatches)).tolist()
+    pairs = []
+
+    for i in range(len(minibatches)):
+        j = i + 1 if i < (len(minibatches) - 1) else 0
+
+        xi, yi = minibatches[perm[i]][0], minibatches[perm[i]][1]
+        xj, yj = minibatches[perm[j]][0], minibatches[perm[j]][1]
+
+        min_n = min(len(xi), len(xj))
+
+        pairs.append(((xi[:min_n], yi[:min_n]), (xj[:min_n], yj[:min_n])))
+
+    return pairs
+
+
+def accuracy(network, loader, weights, device):
+    correct = 0
+    total = 0
+    weights_offset = 0
+
+    network.eval()
+    with torch.no_grad():
+        for x, y in loader:
+            x = x.to(device)
+            y = y.to(device)
+            p = network.predict(x)
+            if weights is None:
+                batch_weights = torch.ones(len(x))
+            else:
+                batch_weights = weights[weights_offset: weights_offset + len(x)]
+                weights_offset += len(x)
+            batch_weights = batch_weights.to(device)
+            if p.size(1) == 1:
+                correct += (p.gt(0).eq(y).float() * batch_weights.view(-1, 1)).sum().item()
+            else:
+                correct += (p.argmax(1).eq(y).float() * batch_weights).sum().item()
+            total += batch_weights.sum().item()
+    network.train()
+
+    return correct / total
+
+
+def accuracy_metrics(network, loader, weights, device):
+    """Compute accuracy + macro-F1 + macro-recall in a single eval pass.
+
+    Macro averaging weights every class equally — matches WILDS leaderboard
+    convention for long-tail classification (e.g. iWildCam, 182 species
+    where one class accounts for 34% of samples).
+    """
+    from sklearn.metrics import f1_score, recall_score
+
+    network.eval()
+    y_true_chunks, y_pred_chunks, w_chunks = [], [], []
+    weights_offset = 0
+    with torch.no_grad():
+        for x, y in loader:
+            x = x.to(device)
+            y = y.to(device)
+            p = network.predict(x)
+            if weights is None:
+                bw = torch.ones(len(x), device=device)
+            else:
+                bw = weights[weights_offset:weights_offset + len(x)].to(device)
+                weights_offset += len(x)
+            if p.size(1) == 1:
+                pred = p.gt(0).long().squeeze(-1)
+            else:
+                pred = p.argmax(1)
+            y_true_chunks.append(y.cpu().numpy())
+            y_pred_chunks.append(pred.cpu().numpy())
+            w_chunks.append(bw.cpu().numpy())
+    network.train()
+
+    y_true = np.concatenate(y_true_chunks)
+    y_pred = np.concatenate(y_pred_chunks)
+    sw = np.concatenate(w_chunks)
+
+    acc = float((y_true == y_pred).astype(float).dot(sw) / sw.sum())
+    f1 = float(f1_score(y_true, y_pred, average='macro',
+                        sample_weight=sw, zero_division=0))
+    rec = float(recall_score(y_true, y_pred, average='macro',
+                             sample_weight=sw, zero_division=0))
+    return {'acc': acc, 'f1': f1, 'recall': rec}
+
+
+class Tee:
+    def __init__(self, fname, mode="a"):
+        self.stdout = sys.stdout
+        self.file = open(fname, mode)
+
+    def write(self, message):
+        self.stdout.write(message)
+        self.file.write(message)
+        self.flush()
+
+    def flush(self):
+        self.stdout.flush()
+        self.file.flush()
+
+
+class ParamDict(OrderedDict):
+    """Code adapted from https://github.com/Alok/rl_implementations/tree/master/reptile.
+    A dictionary where the values are Tensors, meant to represent weights of
+    a model. This subclass lets you perform arithmetic on weights directly."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, *kwargs)
+
+    def _prototype(self, other, op):
+        if isinstance(other, Number):
+            return ParamDict({k: op(v, other) for k, v in self.items()})
+        elif isinstance(other, dict):
+            return ParamDict({k: op(self[k], other[k]) for k in self})
+        else:
+            raise NotImplementedError
+
+    def __add__(self, other):
+        return self._prototype(other, operator.add)
+
+    def __rmul__(self, other):
+        return self._prototype(other, operator.mul)
+
+    __mul__ = __rmul__
+
+    def __neg__(self):
+        return ParamDict({k: -v for k, v in self.items()})
+
+    def __rsub__(self, other):
+        # a- b := a + (-b)
+        return self.__add__(other.__neg__())
+
+    __sub__ = __rsub__
+
+    def __truediv__(self, other):
+        return self._prototype(other, operator.truediv)

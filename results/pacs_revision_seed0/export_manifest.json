@@ -1,0 +1,54 @@
+{
+  "exported_utc": "2026-09-28T12:20:56.381052+00:00",
+  "seeds": [
+    0
+  ],
+  "completed_runs": [
+    "v2_learned_env0_seed0",
+    "v2_learned_env1_seed0",
+    "v2_learned_env2_seed0",
+    "v2_learned_env3_seed0"
+  ],
+  "partial_runs": [
+    "decoupled_max_env0_seed0"
+  ],
+  "excluded_checkpoints": [
+    {
+      "path": "decoupled_max_env0_seed0/best.pt",
+      "bytes": 345340785
+    },
+    {
+      "path": "v2_learned_env0_seed0/best.pt",
+      "bytes": 345341164
+    },
+    {
+      "path": "v2_learned_env0_seed0/last.pt",
+      "bytes": 345341164
+    },
+    {
+      "path": "v2_learned_env1_seed0/best.pt",
+      "bytes": 345340268
+    },
+    {
+      "path": "v2_learned_env1_seed0/last.pt",
+      "bytes": 345340268
+    },
+    {
+      "path": "v2_learned_env2_seed0/best.pt",
+      "bytes": 345342316
+    },
+    {
+      "path": "v2_learned_env2_seed0/last.pt",
+      "bytes": 345342252
+    },
+    {
+      "path": "v2_learned_env3_seed0/best.pt",
+      "bytes": 345335532
+    },
+    {
+      "path": "v2_learned_env3_seed0/last.pt",
+      "bytes": 345335468
+    }
+  ],
+  "note": "Point-in-time export; partial run metrics are not final target results."
+}

@@ -1,0 +1,285 @@
+{
+  "pid": 114655,
+  "state": "running",
+  "seeds": [
+    0
+  ],
+  "started_utc": "2026-09-28T10:22:29.588711+00:00",
+  "protocol": "six seed-0 arms; additional seeds restricted by user request",
+  "smoke": false,
+  "jobs": [
+    {
+      "arm": "v2_learned",
+      "seed": 0,
+      "target_env": 0,
+      "state": "completed",
+      "output": "v2_learned_env0_seed0",
+      "log": "v2_learned_env0_seed0.log",
+      "pid": 81738,
+      "returncode": 0
+    },
+    {
+      "arm": "v2_learned",
+      "seed": 0,
+      "target_env": 1,
+      "state": "completed",
+      "output": "v2_learned_env1_seed0",
+      "log": "v2_learned_env1_seed0.log",
+      "pid": 88406,
+      "returncode": 0
+    },
+    {
+      "arm": "v2_learned",
+      "seed": 0,
+      "target_env": 2,
+      "state": "completed",
+      "output": "v2_learned_env2_seed0",
+      "log": "v2_learned_env2_seed0.log",
+      "pid": 95166,
+      "returncode": 0
+    },
+    {
+      "arm": "v2_learned",
+      "seed": 0,
+      "target_env": 3,
+      "state": "completed",
+      "output": "v2_learned_env3_seed0",
+      "log": "v2_learned_env3_seed0.log",
+      "pid": 102374,
+      "returncode": 0
+    },
+    {
+      "arm": "decoupled_max",
+      "seed": 0,
+      "target_env": 0,
+      "state": "running",
+      "output": "decoupled_max_env0_seed0",
+      "log": "decoupled_max_env0_seed0.log",
+      "pid": 114309
+    },
+    {
+      "arm": "decoupled_max",
+      "seed": 0,
+      "target_env": 1,
+      "state": "queued",
+      "output": "decoupled_max_env1_seed0",
+      "log": "decoupled_max_env1_seed0.log"
+    },
+    {
+      "arm": "decoupled_max",
+      "seed": 0,
+      "target_env": 2,
+      "state": "queued",
+      "output": "decoupled_max_env2_seed0",
+      "log": "decoupled_max_env2_seed0.log"
+    },
+    {
+      "arm": "decoupled_max",
+      "seed": 0,
+      "target_env": 3,
+      "state": "queued",
+      "output": "decoupled_max_env3_seed0",
+      "log": "decoupled_max_env3_seed0.log"
+    },
+    {
+      "arm": "hinge_matched_adm",
+      "seed": 0,
+      "target_env": 0,
+      "state": "queued",
+      "output": "hinge_matched_adm_env0_seed0",
+      "log": "hinge_matched_adm_env0_seed0.log"
+    },
+    {
+      "arm": "hinge_matched_adm",
+      "seed": 0,
+      "target_env": 1,
+      "state": "queued",
+      "output": "hinge_matched_adm_env1_seed0",
+      "log": "hinge_matched_adm_env1_seed0.log"
+    },
+    {
+      "arm": "hinge_matched_adm",
+      "seed": 0,
+      "target_env": 2,
+      "state": "queued",
+      "output": "hinge_matched_adm_env2_seed0",
+      "log": "hinge_matched_adm_env2_seed0.log"
+    },
+    {
+      "arm": "hinge_matched_adm",
+      "seed": 0,
+      "target_env": 3,
+      "state": "queued",
+      "output": "hinge_matched_adm_env3_seed0",
+      "log": "hinge_matched_adm_env3_seed0.log"
+    },
+    {
+      "arm": "v2_no_discrepancy",
+      "seed": 0,
+      "target_env": 0,
+      "state": "queued",
+      "output": "v2_no_discrepancy_env0_seed0",
+      "log": "v2_no_discrepancy_env0_seed0.log"
+    },
+    {
+      "arm": "v2_no_discrepancy",
+      "seed": 0,
+      "target_env": 1,
+      "state": "queued",
+      "output": "v2_no_discrepancy_env1_seed0",
+      "log": "v2_no_discrepancy_env1_seed0.log"
+    },
+    {
+      "arm": "v2_no_discrepancy",
+      "seed": 0,
+      "target_env": 2,
+      "state": "queued",
+      "output": "v2_no_discrepancy_env2_seed0",
+      "log": "v2_no_discrepancy_env2_seed0.log"
+    },
+    {
+      "arm": "v2_no_discrepancy",
+      "seed": 0,
+      "target_env": 3,
+      "state": "queued",
+      "output": "v2_no_discrepancy_env3_seed0",
+      "log": "v2_no_discrepancy_env3_seed0.log"
+    },
+    {
+      "arm": "v2_fixed",
+      "seed": 0,
+      "target_env": 0,
+      "state": "queued",
+      "output": "v2_fixed_env0_seed0",
+      "log": "v2_fixed_env0_seed0.log"
+    },
+    {
+      "arm": "v2_fixed",
+      "seed": 0,
+      "target_env": 1,
+      "state": "queued",
+      "output": "v2_fixed_env1_seed0",
+      "log": "v2_fixed_env1_seed0.log"
+    },
+    {
+      "arm": "v2_fixed",
+      "seed": 0,
+      "target_env": 2,
+      "state": "queued",
+      "output": "v2_fixed_env2_seed0",
+      "log": "v2_fixed_env2_seed0.log"
+    },
+    {
+      "arm": "v2_fixed",
+      "seed": 0,
+      "target_env": 3,
+      "state": "queued",
+      "output": "v2_fixed_env3_seed0",
+      "log": "v2_fixed_env3_seed0.log"
+    },
+    {
+      "arm": "v2_random",
+      "seed": 0,
+      "target_env": 0,
+      "state": "queued",
+      "output": "v2_random_env0_seed0",
+      "log": "v2_random_env0_seed0.log"
+    },
+    {
+      "arm": "v2_random",
+      "seed": 0,
+      "target_env": 1,
+      "state": "queued",
+      "output": "v2_random_env1_seed0",
+      "log": "v2_random_env1_seed0.log"
+    },
+    {
+      "arm": "v2_random",
+      "seed": 0,
+      "target_env": 2,
+      "state": "queued",
+      "output": "v2_random_env2_seed0",
+      "log": "v2_random_env2_seed0.log"
+    },
+    {
+      "arm": "v2_random",
+      "seed": 0,
+      "target_env": 3,
+      "state": "queued",
+      "output": "v2_random_env3_seed0",
+      "log": "v2_random_env3_seed0.log"
+    },
+    {
+      "arm": "v2_learned",
+      "seed": 1,
+      "target_env": 0,
+      "state": "cancelled",
+      "output": "v2_learned_env0_seed1",
+      "log": "v2_learned_env0_seed1.log",
+      "reason": "user requested seed 0 only"
+    },
+    {
+      "arm": "v2_learned",
+      "seed": 1,
+      "target_env": 1,
+      "state": "cancelled",
+      "output": "v2_learned_env1_seed1",
+      "log": "v2_learned_env1_seed1.log",
+      "reason": "user requested seed 0 only"
+    },
+    {
+      "arm": "v2_learned",
+      "seed": 1,
+      "target_env": 2,
+      "state": "cancelled",
+      "output": "v2_learned_env2_seed1",
+      "log": "v2_learned_env2_seed1.log",
+      "reason": "user requested seed 0 only"
+    },
+    {
+      "arm": "v2_learned",
+      "seed": 1,
+      "target_env": 3,
+      "state": "cancelled",
+      "output": "v2_learned_env3_seed1",
+      "log": "v2_learned_env3_seed1.log",
+      "reason": "user requested seed 0 only"
+    },
+    {
+      "arm": "v2_learned",
+      "seed": 2,
+      "target_env": 0,
+      "state": "cancelled",
+      "output": "v2_learned_env0_seed2",
+      "log": "v2_learned_env0_seed2.log",
+      "reason": "user requested seed 0 only"
+    },
+    {
+      "arm": "v2_learned",
+      "seed": 2,
+      "target_env": 1,
+      "state": "cancelled",
+      "output": "v2_learned_env1_seed2",
+      "log": "v2_learned_env1_seed2.log",
+      "reason": "user requested seed 0 only"
+    },
+    {
+      "arm": "v2_learned",
+      "seed": 2,
+      "target_env": 2,
+      "state": "cancelled",
+      "output": "v2_learned_env2_seed2",
+      "log": "v2_learned_env2_seed2.log",
+      "reason": "user requested seed 0 only"
+    },
+    {
+      "arm": "v2_learned",
+      "seed": 2,
+      "target_env": 3,
+      "state": "cancelled",
+      "output": "v2_learned_env3_seed2",
+      "log": "v2_learned_env3_seed2.log",
+      "reason": "user requested seed 0 only"
+    }
+  ]
+}
