@@ -6,6 +6,19 @@ data/
 train_output/
 subset_irm_outputs/
 
+# Generated research results, cached features, and run snapshots
+/results/
+/predictive_support_outputs/
+/experiments/**/artifacts/
+
+# Model checkpoints and binary diagnostic caches
+*.pt
+*.pth
+*.pkl
+*.npz
+*.npy
+*.ckpt
+
 # Sweep logs and results
 sweep/logs/
 sweep/results/

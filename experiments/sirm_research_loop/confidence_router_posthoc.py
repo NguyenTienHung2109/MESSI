@@ -1,0 +1,41 @@
+"""Source-reviewed, locked checkpoint target replay and complete iteration17 report."""
+import json,os,time
+from pathlib import Path
+import numpy as np
+import torch
+from .routed_discovery_run import ROOT,DEST as PRIOR,ANCHOR
+from .shrinkage import digest,write
+from .confidence_router_replay import install
+from experiments.terra_10pct_factor_diagnosis.report import audit_training,analyze
+DEST=PRIOR.parent/'iteration_18';TRIO=DEST/'experiment/runs/L38'
+def main():
+ torch.backends.cuda.matmul.allow_tf32=False;torch.backends.cudnn.allow_tf32=False
+ source=json.loads((DEST/'source_analysis/results.json').read_text());assert source['source_only'] and not source['target_read'];assert json.loads((DEST/'training_audit.json').read_text())['passed']
+ assert all(source['OFF_ON_state_equal'].values()),'ON differs: manual source case review required before target replay'
+ assert (DEST/'OFF_source_analysis.md').exists() and json.loads((DEST/'OFF_analysis_audit.json').read_text())['grid_visually_reviewed']
+ assessment={arm:dict(source_full=source['banks'][arm+'/selected']['splits']['source_out']['full_accuracy'],source_global=source['banks'][arm+'/selected']['splits']['source_out']['global_accuracy'],active_steps=source['training'][arm]['active_steps'],shared_refreshes=source['training'][arm]['shared_refreshes'],repairs=source['banks'][arm+'/selected']['splits']['source_out']['repairs'],harms=source['banks'][arm+'/selected']['splits']['source_out']['harms']) for arm in ['OFF','ON']}
+ write(DEST/'source_review_before_target.json',dict(source_results_sha256=digest(DEST/'source_analysis/results.json'),assessment=assessment,method_change=False,target_used_for_selection=False,scope='Completed source diagnostics reviewed before fixed-checkpoint target reporting, regardless of success or failure. No candidate ranking or target-dependent intervention.'))
+ install();manifest=json.loads((DEST/'experiment/subset_manifest.json').read_text());records={}
+ for arm in ['OFF','ON']:
+  audit_training(TRIO/arm,1);analyze(TRIO/arm,1,arm,manifest);records[arm]=json.loads((TRIO/arm/'posthoc/complete.json').read_text());assert records[arm]['checkpoint_sha256']==source['banks'][arm+'/selected']['checkpoint_sha256']
+ base=json.loads((TRIO/'ERM_H2/posthoc/complete.json').read_text());assert base['checkpoint_sha256']==digest(ANCHOR)
+ lines=['# Shared confidence routing: matched400-update trajectory test','','Goal: test useful complementary factor discovery and dynamic binary subset invariance above a strong frozen ERM anchor.','','Stage-1 ERM checkpoint: completed501 updates0–500; source-selected375. SHA '+digest(ANCHOR)+'. No ERM retraining.','','Stage-2 configuration: fixed10%TerraL38/seed0, same subset/init/source schedules,400updates. Discovery0–199; dynamic detachedQ/binarySIRM200–399, refresh5, lambda1/ramp50 (OFF0). Original768→7 router is replaced by a shared11→1 confidence score per expert and NULL0, with detached descriptors, zero head initialization and fixed entropy/anchor source-logit units. Global descriptor CLS is reconstructed from fixed bank normalization; deployed global uses exact CLS. Retain iteration17 actual-mixture auxiliary CE, discovery guard/minimum2, cap/coefficient, base losses, Adamlr3e-5 and SIRM. Diagnostic fitted weights are not reused; this is architecture/readout+fixed-unit normalization family change.','','B0/B1/B2 accuracy (percent; source equal-domain, target image-weighted):','','| Model | Selected step | Source validation | Target-in test | Target-out |','|---|---:|---:|---:|---:|']
+ for arm,r in [('B0 frozenERM',base),('B1 OFF',records['OFF']),('B2 ON',records['ON'])]:lines.append('| '+arm+' | '+str(r['selected_step'])+' | '+' | '.join(f"{100*r['splits'][s]['source_mean']:.6f}" for s in ['source_out','target_in','target_out'])+' |')
+ off,on=records['OFF'],records['ON'];factor=off['splits']['target_in']['source_mean']-base['splits']['target_in']['source_mean'];gain=on['splits']['target_in']['source_mean']-off['splits']['target_in']['source_mean']
+ lines+=['',f'Factor discovery target gain: {100*factor:+.6f}pp. SIRM ON−OFF: {100*gain:+.6f}pp. Source-selected checkpoints locked before target access; no target tuning.','','| Arm / split | Full−global pp | Cosine mean | Correction/global RMS | Router NULL |','|---|---:|---:|---:|---:|']
+ for arm,r in records.items():
+  for split,d in r['splits'].items():lines.append(f"| {arm}/{split} | {100*(d['source_mean']-d['global_mean']):+.6f} | {d['cosine']['pair_mean']:.6f} | {d['correction_global_norm_ratio_rms']:.6f} | {d['router_mass'][-1]:.6f} |")
+ lines+=['','Factor discovery result: source repair/harm counts and all per-image/expert CE utilities are in source_analysis/results.json. Compare individual expert utility with deployed composition; low residual cosine alone does not prove useful factors.','','Factor transfer result:']
+ for arm,r in records.items():
+  d=r['splits']['target_in'];lines.append(f"{arm}: source→target CE utility Spearman={d['source_target_CE_spearman']}; source→target accuracy removal Spearman={d['source_target_accuracy_spearman']}. Useful/harmful accuracy-removal experts={d['useful_experts']}/{d['harmful_experts']}. Six expert ranks are descriptive, not robust causal estimates.")
+ lines+=['','Q behavior and SIRM mechanism:']
+ for arm,r in records.items():
+  mech=r['mechanism'];lines.append(f"{arm}: active={mech['active_steps']}/{mech['stage3_steps']}; no shared refreshes={mech['no_shared_refreshes']}/40; ESS-blocked={mech['ESS_blocked_refreshes']}. Gradient-ratio refresh samples: {json.dumps(mech['gradient_ratio'])}. Q matrices, U/interactions and refresh histories are retained in posthoc/complete.json and Q_refresh_history.json.")
+ masks={'ON_selected_Q':np.array(on['splits']['source_out']['q'])>0,'ON_executed_union':np.array(on['mechanism']['union_mask'],bool)};G={}
+ for name,mask in masks.items():
+  G[name]={arm:float(np.array(r['splits']['source_out']['G_matrix'])[mask].mean()) if mask.any() else None for arm,r in records.items()};lines.append(f'Common-mask G {name}: {G[name]}. Empty masks are undefined, not zero violation.')
+ lines+=['','Shrinkage analysis: ON/OFF saved states equal='+str(source['OFF_ON_state_equal'])+'. If there is no executed penalty and no ON gain, no invariant-factor or shrinkage benefit can be inferred. Residual norms per expert and RMS are in complete.json. Architecture-vs-prior contraction is separate from an ON treatment effect.','','Primary bottleneck: diagnose discovery utility, transfer and missing shared support from the completed rows; no-op ON cannot test an active invariance constraint.','','Hypothesis status: '+('Confidence-router architecture produces a positive exploratory target change; usefulness/reproducibility and subset invariance remain unproven.' if factor>0 else 'Confidence-router architecture does not produce a positive source-selected target gain; fixed-bank additional400-step diagnostic gain did not establish useful factor transfer under matched400-update training.')+' One seed, inspected source/targets, small subset.','','Recommended next change: complete per-class failed-case, routing spread and utility comparison with iteration17 before any further intervention. Inspect conditional usefulness and protection of correct predictions; no next method until analysis completes. Do not change lambda or thresholds based on target scores.','','[Source diagnostics](source_analysis/results.json), [source review before target](source_review_before_target.json), [OFF full diagnostics](experiment/runs/L38/OFF/posthoc/complete.json), [ON full diagnostics](experiment/runs/L38/ON/posthoc/complete.json).']
+ (DEST/'report.md').write_text('\n'.join(lines)+'\n');write(DEST/'mechanism_common_masks.json',G)
+ artifacts=[f for f in DEST.rglob('*') if f.is_file() and f.suffix in ['.json','.jsonl','.md','.py','.csv'] and 'console' not in f.name]
+ write(DEST/'final_analysis_audit.json',dict(analysis_complete=False,reason='Primary replay/report complete; failed-case comparison and interpretation audit pending',training_complete=True,target_selected=False,scientific_goal_achieved=False,sha256={str(f.relative_to(DEST)):digest(f) for f in artifacts if f.name!='final_analysis_audit.json'}));print('Locked posthoc complete',flush=True)
+if __name__=='__main__':main()

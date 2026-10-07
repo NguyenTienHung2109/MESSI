@@ -71,6 +71,7 @@ ALGORITHMS = [
     'MESSI',
     'MESSI_MMD',
     'MESSI_SubsetIRM',
+    'SIRMDiscoverV2',
     'GMOE_InvOT',
     'rMESSI_InvOT',
     'GMOE_InvAdv',
@@ -80,6 +81,12 @@ ALGORITHMS = [
 
 def get_algorithm_class(algorithm_name):
     """Return the algorithm class with the given name."""
+    if algorithm_name == 'ERMH2Diagnostic':
+        from experiments.terra_10pct_factor_diagnosis.erm import ERMH2Diagnostic
+        return ERMH2Diagnostic
+    if algorithm_name == 'SIRMDiscoverV2':
+        from domainbed.sirm_discover import SIRMDiscoverV2
+        return SIRMDiscoverV2
     if algorithm_name == 'MESSI_SubsetIRM':
         # Kept lazy because domainbed.subset_irm reuses the public MESSI base.
         from domainbed.subset_irm import MESSISubsetIRM

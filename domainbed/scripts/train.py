@@ -292,6 +292,10 @@ if __name__ == "__main__":
         uda = []
 
         out, in_ = misc.split_dataset(env, int(len(env) * args.holdout_fraction), misc.seed_hash(args.trial_seed, env_i))
+        if hparams.get('diagnostic_subset_manifest'):
+            from experiments.terra_10pct_factor_diagnosis.subsets import apply
+            out, in_ = apply(env,env_i,args,hparams)
+
         if env_i in args.test_envs:
             uda, in_ = misc.split_dataset(in_, int(len(in_) * args.uda_holdout_fraction), misc.seed_hash(args.trial_seed, env_i))
 
@@ -374,6 +378,10 @@ if __name__ == "__main__":
     for i, (env, env_weights) in enumerate(in_splits):
         if not _is_training_env(i):
             continue
+        if args.algorithm in ['SIRMDiscoverV2','ERMH2Diagnostic']:
+            from domainbed.sirm_discover import training_loader
+            train_loaders.append(training_loader(env,i,args,hparams))
+            continue
         # `env` is a _SplitDataset wrapping a base dataset. Walk to the base
         # to look up location metadata.
         base = getattr(env, 'underlying_dataset', env)
@@ -429,6 +437,9 @@ if __name__ == "__main__":
     else:
         eval_env_indices = list(range(len(in_splits)))
 
+    if hparams.get('diagnostic_defer_target_eval'):
+        eval_env_indices = [i for i in eval_env_indices if _is_training_env(i)]
+
     # in_splits
     for i in eval_env_indices:
         eval_loader_specs.append((f'env{i}_in', in_splits[i][0], None))
@@ -450,6 +461,9 @@ if __name__ == "__main__":
         num_domains_for_algo = group_K
     else:
         num_domains_for_algo = n_train_envs
+    if args.algorithm in ['SIRMDiscoverV2','ERMH2Diagnostic']:
+        # Preserve the old seed-0 initialization; loader setup consumes RNG.
+        random.seed(args.seed);np.random.seed(args.seed);torch.manual_seed(args.seed)
     algorithm = algorithm_class(dataset.input_shape, dataset.num_classes,
                                 num_domains_for_algo, hparams)
 
@@ -553,7 +567,9 @@ if __name__ == "__main__":
         for key, val in step_vals.items():
             checkpoint_vals[key].append(val)
 
-        if (step % checkpoint_freq == 0) or (step == n_steps - 1):
+        selection_checkpoint=(step % checkpoint_freq == 0) or (step == n_steps - 1) or (hasattr(algorithm,'extra_checkpoint_steps') and step in algorithm.extra_checkpoint_steps())
+        refresh_evaluation=hasattr(algorithm,'needs_source_evaluation') and algorithm.needs_source_evaluation()
+        if selection_checkpoint or refresh_evaluation:
             results = {
                 'step': step,
                 'epoch': step / steps_per_epoch,
@@ -564,6 +580,10 @@ if __name__ == "__main__":
 
             eval_start_time = time.time()
             for name, eval_dataset, weights in eval_loader_specs:
+                if not selection_checkpoint and name not in [f'env{i}_out' for i in args.source_envs or range(len(dataset)) if _is_training_env(i)]:
+                    continue
+                if hasattr(algorithm,'evaluation_dataset'):
+                    eval_dataset=algorithm.evaluation_dataset(eval_dataset)
                 loader = FastDataLoader(
                     dataset=eval_dataset,
                     batch_size=args.eval_batch_size,
@@ -580,6 +600,8 @@ if __name__ == "__main__":
             results['model_trainable_params'] = model_trainable_params
             results['test_envs'] = args.test_envs
             results['mem_gb'] = torch.cuda.max_memory_allocated() / (1024. * 1024. * 1024.)
+            if hasattr(algorithm,'on_evaluation'):
+                algorithm.on_evaluation(results,step,selection_checkpoint)
 
             results_keys = sorted(results.keys())
             if results_keys != last_results_keys:

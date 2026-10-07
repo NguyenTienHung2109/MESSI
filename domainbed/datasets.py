@@ -359,7 +359,10 @@ class MultipleEnvironmentImageFolder(MultipleDomainDataset):
         self.datasets = []
         for i, environment in enumerate(environments):
 
-            if augment and (i not in test_envs):
+            if augment and (i not in test_envs) and hparams.get('sirm_discover_config'):
+                from experiments.sirm_h1_h6.run import ViewTransform
+                env_transform=ViewTransform(hparams['sirm_discover_config'],'original',True,i,'balanced_views')
+            elif augment and (i not in test_envs):
                 env_transform = augment_transform
             else:
                 env_transform = transform

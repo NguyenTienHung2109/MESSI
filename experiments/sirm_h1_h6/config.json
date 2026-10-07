@@ -1,0 +1,104 @@
+{
+  "protocol": "pacs_h1_h6_domainbed80_20_v1",
+  "steps": 5001,
+  "checkpoint_freq": 500,
+  "eval_batch_size": 64,
+  "num_workers": 2,
+  "hparams": {
+    "model": "deit_small_patch16_224",
+    "pretrained": true,
+    "legacy_non_distilled_deit": false,
+    "patch_size": 16,
+    "moe_dim": "auto",
+    "num_experts": 6,
+    "expert_mlp_ratio": 4,
+    "freeze_featurizer": false,
+    "batch_size": 32,
+    "lr": 3e-05,
+    "weight_decay": 1e-06,
+    "data_augmentation": true,
+    "class_balanced": false,
+    "alpha": 4.0,
+    "lambda_inv": 0.0,
+    "lambda_sp": 0.0,
+    "lambda_bal": 0.0,
+    "lambda_div": 0.0,
+    "subset_irm_enabled": true,
+    "subset_irm_prediction_mode": "expert_logit_mix",
+    "subset_irm_router_topk": 2,
+    "subset_irm_topk_warmup_steps": 500,
+    "subset_irm_use_expert_heads": true,
+    "subset_irm_lambda_expert": 0.1,
+    "subset_irm_lambda_route": 0.1,
+    "subset_irm_lambda_sirm": 0.1,
+    "subset_irm_responsibility_detach": true,
+    "subset_irm_assignment_mode": "risk_ema",
+    "subset_irm_assignment_topr": 2,
+    "subset_irm_assignment_temperature": 1.0,
+    "subset_irm_assignment_ema": 0.9,
+    "subset_irm_probe_interval": 500,
+    "subset_irm_min_effective_samples": 2,
+    "subset_irm_sirm_anneal_steps": 500,
+    "subset_irm_gradient_log_interval": 500,
+    "subset_irm_route_anneal_steps": 500,
+    "subset_irm_ssi_mode": "none"
+  },
+  "router_hidden": 128,
+  "router_lr": 0.003,
+  "router_epochs": 300,
+  "temperatures": [
+    0.25,
+    0.5,
+    1.0,
+    2.0
+  ],
+  "noise_sigmas": [
+    0.0,
+    0.25,
+    0.5,
+    1.0
+  ],
+  "mixture_weights": [
+    [
+      0.3333333333333333,
+      0.3333333333333333,
+      0.3333333333333333
+    ],
+    [
+      0.8,
+      0.1,
+      0.1
+    ],
+    [
+      0.1,
+      0.8,
+      0.1
+    ],
+    [
+      0.1,
+      0.1,
+      0.8
+    ]
+  ],
+  "bootstrap_repeats": 500,
+  "cpu_threads": 4,
+  "interventions": {
+    "blur_kernel": 5,
+    "blur_sigma": 1.0,
+    "brightness": 1.1,
+    "contrast": 1.1,
+    "saturation": 0.9,
+    "border_width": 4
+  },
+  "assignment_interval": 500,
+  "assignment_weights": [
+    0.0,
+    0.1,
+    1.0
+  ],
+  "grad_min_count": 2,
+  "grad_min_norm": 1e-08,
+  "probe_regularization": 0.01,
+  "probe_max_iter": 300,
+  "probe_tolerance": 0.0001
+}
