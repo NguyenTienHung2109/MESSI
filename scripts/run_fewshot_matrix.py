@@ -27,6 +27,8 @@ def main():
     parser.add_argument("--scopes", nargs="+", default=["total", "per_domain"])
     parser.add_argument("--shots", nargs="+", type=int, default=[1, 2, 4, 8, 16])
     parser.add_argument("--seeds", nargs="+", type=int, default=[42, 43, 44, 45, 46])
+    parser.add_argument("--proker-rff-on-large", action="store_true",
+                        help="Use distinct RFF method key when exact solver estimated working set exceeds 48 GiB")
     parser.add_argument("--rff-device", default="cpu")
     parser.add_argument("--rff-components", type=int, default=4096)
     parser.add_argument("--training-device", default="cpu")
@@ -38,6 +40,15 @@ def main():
     for dataset, backbone, method, setting, scope, shots, seed in product(
             args.datasets, args.backbones, args.methods, args.settings,
             args.scopes, args.shots, args.seeds):
+        if args.proker_rff_on_large and method == "proker_imagenet_fixed":
+            view_path = ROOT / "results/fewshot_ood/support_views" / dataset / backbone / "complete.json"
+            views = json.loads(view_path.read_text())["n_views"]
+            source_count = 1 if setting == "single_source" else len(audit[dataset]["domains"]) - 1
+            budget = shots * (source_count if scope == "per_domain" else 1)
+            n_keys = len(audit[dataset]["canonical_classes"]) * budget * views
+            if n_keys ** 2 * 8 * 3 > 48 * 1024**3:
+                method = "proker_rff_imagenet_fixed"
+                print(f"Using ProKeR RFF for {dataset} K={shots}: exact dense solve exceeds 48 GiB estimate", flush=True)
         result_dir = (ROOT / "results/fewshot_ood/runs" / dataset / backbone /
                       setting / scope / str(shots) / str(seed) / method)
         expected = {fold.identifier for fold in folds(sorted(audit[dataset]["domains"]), setting)}

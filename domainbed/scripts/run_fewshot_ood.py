@@ -297,7 +297,9 @@ def main() -> None:
     fold_list = folds(names, args.setting)
     if args.fold is not None:
         fold_list = [fold_list[args.fold]]
-    dataset_manifest_sha = sha(ROOT / "results/fewshot_ood/data_audit.json")
+    dataset_manifest_sha = hashlib.sha256(
+        json.dumps(audit, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     runtime = {"python": platform.python_version(), "numpy": np.__version__,
                "torch": importlib.metadata.version("torch"),

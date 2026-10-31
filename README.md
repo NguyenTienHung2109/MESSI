@@ -46,4 +46,4 @@ python -m domainbed.scripts.eval \
 
 ## Few-shot OOD benchmark
 
-See [README_FEWSHOT.md](README_FEWSHOT.md) for the PACS single-source protocol, environment, scripts, tested CLIP baselines, and Excel workbook.
+See [README_FEWSHOT.md](README_FEWSHOT.md) for the five-dataset single-source protocol, environment, scripts, CLIP baselines, and Excel workbook.

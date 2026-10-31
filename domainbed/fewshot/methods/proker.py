@@ -44,6 +44,10 @@ class ProKeR(Classifier):
         self.lmbda = float(config["proker_lambda"])
         if self.beta <= 0 or self.lmbda <= 0:
             raise ValueError("ProKeR coefficients must be positive")
+        # The solve and intermediate arrays can require several dense matrices.
+        estimated_bytes = len(self.keys) ** 2 * 8 * 3
+        if estimated_bytes > 48 * 1024**3:
+            raise MemoryError("Exact ProKeR estimated working set exceeds 48 GiB; use the RFF solver")
         kernel = np.exp(-self.beta * (1.0 - self.keys @ self.keys.T))
         kernel.flat[::len(kernel) + 1] += self.lmbda
         target = np.eye(self.num_classes, dtype=np.float64)[view_labels]

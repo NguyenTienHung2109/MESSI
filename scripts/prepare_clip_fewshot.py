@@ -57,8 +57,6 @@ def main():
         raise RuntimeError(f'Dataset directory is missing: {a.data_dir / DATASETS[a.dataset][0]}')
     if not report['valid'] and not a.allow_nonstandard_dataset:
         raise RuntimeError(f"Dataset audit failed: {report['errors']}")
-    if any(len(v['class_counts']) != DATASETS[a.dataset][2] for v in report['domains'].values()):
-        raise RuntimeError('Each domain needs all canonical classes')
     import clip
     import torch
     from torchvision import transforms
@@ -86,14 +84,26 @@ def main():
                        for i in range(len(paths)) if domains[int(envs[i])] in fold.source_domains and paths[i] not in excluded]
             pool = candidate_pool(records, fold.source_domains, len(classes), seed)
             for k in a.shots:
-                manifest = build_manifest(a.dataset, fold, pool, len(classes), k, 'total', seed)
+                try:
+                    manifest = build_manifest(a.dataset, fold, pool, len(classes), k, 'total', seed)
+                except ValueError as exc:
+                    if not str(exc).startswith('Infeasible:'):
+                        raise
+                    print(f'Skipping infeasible source: {fold.identifier}, K={k}, seed={seed}: {exc}', flush=True)
+                    continue
                 save_manifest(ROOT / 'results/fewshot_ood/manifests' / a.dataset / 'single_source/total' / str(k) / str(seed) / f'{fold.identifier}.json', manifest)
                 selected.update(x['sample_id'] for x in manifest['support'])
     cache.mkdir(parents=True); views_dir.mkdir(parents=True)
     started = time.monotonic()
-    def encode_items(items, transform, augmented=False):
-        output = []
-        for start in range(0, len(items), a.batch_size):
+    def encode_items(items, transform, output_path, augmented=False, shape=None):
+        count = len(items)
+        if not count:
+            np.save(output_path, np.empty(shape or (0, 512), dtype=np.float32))
+            return
+        feature = np.lib.format.open_memmap(output_path, mode='w+', dtype='float32',
+                                           shape=shape or (count, 512))
+        flat_feature = feature.reshape(count, 512)
+        for start in range(0, count, a.batch_size):
             batch = []
             for item in items[start:start+a.batch_size]:
                 sample, view = item if augmented else (item, None)
@@ -103,16 +113,22 @@ def main():
                 with Image.open(root / sample) as image:
                     batch.append(transform(image.convert('RGB')))
             with torch.inference_mode():
-                out = model.encode_image(torch.stack(batch).to(a.device)).float().cpu().numpy()
-            output.append(out)
-        return np.concatenate(output)
+                flat_feature[start:start+len(batch)] = model.encode_image(torch.stack(batch).to(a.device)).float().cpu().numpy()
+        feature.flush()
+        del flat_feature, feature
     print(f'Encoding {len(paths)} images and {len(selected)} x {a.views} support views', flush=True)
     np.savez_compressed(cache / 'inventory.npz', sample_id=paths, label=labels.astype('int16'), environment=envs.astype('int8'))
-    np.save(cache / 'image_features.npy', encode_items(list(paths), preprocess))
+    encode_items(paths, preprocess, cache / 'image_features.npy')
     prompts = [[t.format(c.replace('_', ' ').lower()) for t in TEMPLATES] for c in classes]
-    with torch.inference_mode():
-        raw = model.encode_text(clip.tokenize([row[0] for row in prompts]).to(a.device)).float().cpu().numpy()
-        prompt_bank = model.encode_text(clip.tokenize([x for row in prompts for x in row]).to(a.device)).float().cpu().numpy()
+    def text_encode(values):
+        chunks = []
+        with torch.inference_mode():
+            for start in range(0, len(values), a.batch_size):
+                tokens = clip.tokenize(values[start:start+a.batch_size]).to(a.device)
+                chunks.append(model.encode_text(tokens).float().cpu().numpy())
+        return np.concatenate(chunks)
+    raw = text_encode([row[0] for row in prompts])
+    prompt_bank = text_encode([x for row in prompts for x in row])
     normal = lambda x: x / np.maximum(np.linalg.norm(x, axis=-1, keepdims=True), 1e-12)
     np.save(cache / 'text_features.npy', normal(raw)); np.save(cache / 'raw_text_features.npy', raw)
     np.save(cache / 'prompt_features.npy', normal(prompt_bank).reshape(len(classes), len(TEMPLATES), -1))
@@ -122,8 +138,8 @@ def main():
         write_json(cache / (stem + '_metadata.json'), {**base, stem + '_features_sha256': digest(cache / filename)})
     ordered = sorted(selected)
     np.savez_compressed(views_dir / 'inventory.npz', sample_id=np.array(ordered))
-    encoded = encode_items([(sample, v) for sample in ordered for v in range(a.views)], augment, True)
-    np.save(views_dir / 'support_views.npy', encoded.reshape(len(ordered), a.views, -1))
+    encode_items([(sample, v) for sample in ordered for v in range(a.views)], augment,
+                 views_dir / 'support_views.npy', True, (len(ordered), a.views, 512))
     write_json(views_dir / 'complete.json', {'checkpoint_sha256': CLIP_SHA, 'n_views': a.views,
         'support_views_sha256': digest(views_dir / 'support_views.npy'),
         'rank_progress': [{'elapsed_seconds': time.monotonic()-started}]})
