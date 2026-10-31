@@ -1,0 +1,11 @@
+# Install a compatible PyTorch/torchvision build for your GPU first.
+numpy>=1.24,<3
+scipy>=1.10
+scikit-learn>=1.3
+Pillow>=9
+openpyxl>=3.1
+ftfy
+regex
+tqdm
+# Official OpenAI CLIP implementation and tokenizer.
+clip @ git+https://github.com/openai/CLIP.git@dcba3cb2e2827b402d2701e7e1c7d9fed8a20ef1

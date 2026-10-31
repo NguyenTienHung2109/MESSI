@@ -42,3 +42,8 @@ python -m domainbed.scripts.eval \
     --dir_dataset /path/to/datasets/ \
     --dir_ckpt /path/to/model.pt
 ```
+
+
+## Few-shot OOD benchmark
+
+See [README_FEWSHOT.md](README_FEWSHOT.md) for the PACS single-source protocol, environment, scripts, tested CLIP baselines, and Excel workbook.

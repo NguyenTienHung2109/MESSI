@@ -42,3 +42,7 @@ exps/eval_outputs/
 .env
 *.log
 results/
+
+# Few-shot local environment and downloaded model weights
+.venv/
+checkpoints/
