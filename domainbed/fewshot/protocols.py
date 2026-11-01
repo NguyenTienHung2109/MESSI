@@ -16,6 +16,23 @@ from typing import Iterable
 
 SHOTS = (1, 2, 4, 8, 16)
 SEEDS = (42, 43, 44, 45, 46)
+DOMAINNET_DOMAINS = frozenset(("clipart", "infograph", "painting", "quickdraw", "real", "sketch"))
+
+
+def validate_domainnet_domains(dataset: str, domains: Iterable[str]) -> None:
+    """Reject partial DomainNet inventories before declaring benchmark coverage."""
+    names = list(domains)
+    if dataset == "DomainNet" and (len(names) != 6 or set(names) != DOMAINNET_DOMAINS):
+        raise ValueError(f"DomainNet requires all six domains, including quickdraw; got {sorted(names)}")
+
+
+def validate_result_targets(result: dict, fold: "Fold") -> None:
+    """A completed source fold must contain metrics for every required target."""
+    expected = set(fold.target_domains)
+    if (set(result.get("target_domains", ())) != expected or
+            set(result.get("target_metrics", {})) != expected or
+            tuple(result.get("source_domains", ())) != fold.source_domains):
+        raise ValueError(f"Incomplete or mismatched targets for {fold.identifier}; expected {sorted(expected)}")
 
 
 @dataclass(frozen=True)

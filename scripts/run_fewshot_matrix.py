@@ -15,7 +15,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from domainbed.fewshot.protocols import folds
+from domainbed.fewshot.protocols import folds, validate_domainnet_domains, validate_result_targets
 
 
 def main():
@@ -51,12 +51,23 @@ def main():
                 print(f"Using ProKeR RFF for {dataset} K={shots}: exact dense solve exceeds 48 GiB estimate", flush=True)
         result_dir = (ROOT / "results/fewshot_ood/runs" / dataset / backbone /
                       setting / scope / str(shots) / str(seed) / method)
-        expected = {fold.identifier for fold in folds(sorted(audit[dataset]["domains"]), setting)}
+        domains = sorted(audit[dataset]["domains"])
+        validate_domainnet_domains(dataset, domains)
+        expected_folds = {fold.identifier: fold for fold in folds(domains, setting)}
+        expected = set(expected_folds)
         infeasible_dir = (ROOT / "results/fewshot_ood/infeasible" / dataset /
                           setting / scope / str(shots) / str(seed))
 
         def coverage():
-            completed = {path.stem for path in result_dir.glob("*.json")}
+            completed = set()
+            for path in result_dir.glob("*.json"):
+                if path.stem not in expected_folds:
+                    raise RuntimeError(f"Unexpected result fold: {path}")
+                try:
+                    validate_result_targets(json.loads(path.read_text()), expected_folds[path.stem])
+                except (ValueError, json.JSONDecodeError) as exc:
+                    raise RuntimeError(f"Incomplete result {path}; use a fresh results namespace: {exc}") from exc
+                completed.add(path.stem)
             excluded = {path.stem for path in infeasible_dir.glob("*.json")}
             if completed & excluded or (completed | excluded) - expected:
                 raise RuntimeError(f"Contradictory fold coverage: {result_dir}")

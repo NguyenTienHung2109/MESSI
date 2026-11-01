@@ -46,6 +46,11 @@ def audit_dataset(root: Path, name: str, hash_content: bool = False) -> dict:
     errors: list[str] = []
     if len(domains) != expected_domains:
         errors.append(f"expected {expected_domains} domains, found {len(domains)}")
+    if name == "DomainNet":
+        expected = {"clipart", "infograph", "painting", "quickdraw", "real", "sketch"}
+        found = {domain.name for domain in domains}
+        if found != expected:
+            errors.append(f"DomainNet domain mismatch: missing={sorted(expected - found)}, unexpected={sorted(found - expected)}")
     per_domain: dict[str, dict] = {}
     all_classes: set[str] = set()
     ids: set[str] = set()

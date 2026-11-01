@@ -2,10 +2,31 @@ from collections import Counter
 
 import pytest
 
-from domainbed.fewshot.protocols import SourceRecord, candidate_pool, folds, sample_support
+from domainbed.fewshot.protocols import (SourceRecord, candidate_pool, folds, sample_support,
+                                         validate_domainnet_domains, validate_result_targets)
 
 
 DOMAINS = ("A", "C", "P", "S")
+
+
+def test_domainnet_quickdraw_coverage_and_partial_results():
+    domains = ("clipart", "infograph", "painting", "quickdraw", "real", "sketch")
+    validate_domainnet_domains("DomainNet", domains)
+    with pytest.raises(ValueError, match="quickdraw"):
+        validate_domainnet_domains("DomainNet", domains[:-3] + ("other", "real", "sketch"))
+    assignments = folds(domains, "single_source")
+    pairs = {(fold.source_domains[0], target) for fold in assignments for target in fold.target_domains}
+    assert len(pairs) == 30
+    assert sum(source == "quickdraw" for source, target in pairs) == 5
+    assert sum(target == "quickdraw" for source, target in pairs) == 5
+    for fold in assignments:
+        result = {"source_domains": fold.source_domains, "target_domains": fold.target_domains,
+                  "target_metrics": {target: {} for target in fold.target_domains}}
+        validate_result_targets(result, fold)
+        if "quickdraw" in fold.target_domains:
+            del result["target_metrics"]["quickdraw"]
+            with pytest.raises(ValueError, match="Incomplete"):
+                validate_result_targets(result, fold)
 
 
 def records(domains=DOMAINS, classes=7, per_cell=20):

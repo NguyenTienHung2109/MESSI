@@ -12,6 +12,10 @@ Benchmark này hỗ trợ **PACS, VLCS, OfficeHome, TerraIncognita và DomainNet
 | TerraIncognita | `terra_incognita` | location_100, location_38, location_43, location_46 | 12 |
 | DomainNet | `domain_net` | clipart, infograph, painting, quickdraw, real, sketch | 30 |
 
+**DomainNet bao gồm Quickdraw cho tất cả method đã tích hợp**: 5 hướng `quickdraw → domain khác` và 5 hướng `domain khác → quickdraw`, cùng 20 hướng giữa các domain còn lại. Cùng một manifest support theo source/K/seed được dùng cho mọi method và target. Với K-shot không đủ ảnh ở bất kỳ class nào của source, cả 5 hướng từ source đó được đánh dấu `infeasible`, kể cả khi source là Quickdraw. Target luôn dùng toàn bộ ảnh hợp lệ; không loại Quickdraw khỏi test.
+
+Audit yêu cầu đúng sáu tên domain trên. Controller kiểm tra mỗi file fold đã chạy có kết quả cho đủ năm target; file cũ thiếu Quickdraw sẽ báo lỗi thay vì được tính là hoàn tất. Nếu gặp file cũ thiếu target, chạy lại trong namespace kết quả mới; không sửa hoặc gộp thủ công kết quả cũ. Các setting này áp dụng cho `clip_zeroshot`, `tip_adapter_f_imagenet_fixed`, `gda_clip`, `lp_pp_frozen`, `clap_frozen`, `proker_imagenet_fixed` (hoặc key RFF riêng) và `timo_fixed`. Ours và patch-local vẫn chưa có runner trong nhánh này; không diễn giải workbook trống là kết quả đã chạy.
+
 Với từng K ∈ {1,2,4,8,16}, seed ∈ {42,43,44,45,46} và source, lấy K ảnh có nhãn **mỗi lớp** trong source. Một support manifest được dùng chung cho tất cả methods và tất cả target còn lại. K ảnh được tính theo ID ảnh gốc; augmentation không thêm nhãn. Điểm chính là mean accuracy qua các hướng, rồi mean ± sample SD qua 5 seed. CLIP zero-shot không dùng support, vì vậy điểm một target lặp lại ở các seed.
 
 **Không đủ K:** một source có lớp dưới K ảnh sau khi loại trùng được ghi là `infeasible`; không lấy ảnh từ domain khác, không chọn lớp con. Khi đó mọi hướng có source này được loại cho tất cả methods ở K tương ứng. Kết quả `† (m/n)` trong workbook là trung bình trên m hướng khả thi trong tổng n hướng. Nếu không có source khả thi, không có điểm. Không so sánh các method trên tập hướng khác nhau. Các target giữ phân bố lớp tự nhiên.
@@ -108,6 +112,7 @@ Mặc định train heads trên CPU (`TRAINING_DEVICE=cpu`). Để chạy heads 
 ```bash
 scripts/run_fewshot_ood.sh run --datasets OfficeHome --shots 1 --seeds 42
 scripts/run_fewshot_ood.sh run --datasets PACS VLCS --methods gda_clip --shots 1 2
+scripts/run_fewshot_ood.sh run --datasets DomainNet --methods gda_clip --shots 1 2 4 8 16 --seeds 42 43 44 45 46
 ```
 
 ProKeR exact tạo ma trận kernel theo số support views. Wrapper ước lượng ba ma trận FP64: nếu vượt **48 GiB**, nó chuyển run đó sang key `proker_rff_imagenet_fixed` để giữ khoảng trống trong giới hạn 64 GiB; các key và kết quả được lưu riêng, không gộp vô điều kiện. RFF mặc định 4096 components và chạy CPU; có thể đặt `RFF_DEVICE=cuda:0` nếu đủ GPU. Các job lớn vẫn cần theo dõi tổng RAM/GPU. Để cố định solver riêng:

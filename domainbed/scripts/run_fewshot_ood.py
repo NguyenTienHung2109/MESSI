@@ -294,6 +294,8 @@ def main() -> None:
         patch_features = np.load(patch_path / "patch_features.npy", mmap_mode="r")
         if patch_features.shape != (len(ids), 196, 512):
             raise RuntimeError("CALIP patch cache shape mismatch")
+    from domainbed.fewshot.protocols import validate_domainnet_domains, validate_result_targets
+    validate_domainnet_domains(args.dataset, names)
     fold_list = folds(names, args.setting)
     if args.fold is not None:
         fold_list = [fold_list[args.fold]]
@@ -343,6 +345,7 @@ def main() -> None:
                        args.method / f"{fold.identifier}.json")
         if destination.exists():
             existing = json.loads(destination.read_text())
+            validate_result_targets(existing, fold)
             if existing["manifest_sha256"] != manifest["manifest_sha256"]:
                 raise RuntimeError(f"Existing result uses a different support set: {destination}")
             if args.method == "proker_rff_imagenet_fixed" and (
