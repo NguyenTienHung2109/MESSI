@@ -153,3 +153,30 @@ python -m pytest -q tests/fewshot
 ```
 
 Các smoke test dùng số ảnh/domain thu nhỏ chỉ xác minh pipeline; không đưa độ chính xác smoke vào paper. Kết quả chạy đầy đủ cần kiểm tra đủ method, hướng khả thi, 5 seed và đúng manifest trước khi tổng hợp.
+# ImageNet-V2 / ImageNet-A: Ours and patch-local
+
+This experimental reproduction uses ImageNet 16-shot, **seed 1**, and DINOv3-B/16 at 224 pixels. It downloads only the 16,000 support images in the included sampling plan using the Hugging Face datasets-server API. The API serves re-encoded JPEGs; they are not byte/pixel-identical to the ImageNet mirror originals. The public mirror does not expose original ImageNet filenames, so exact support identity with author checkpoints has not been established. Use this same support for all methods being compared.
+
+The target features and support data are not included in the repository. Run the following from the repository root in an environment with CUDA-enabled PyTorch and torchvision, NumPy, Pillow, requests, timm, safetensors and curl:
+
+```bash
+# Set a directory whose disk use should be monitored; the safety threshold is 285 GB.
+export IMAGENET_QUOTA_ROOT="$HOME"
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1 ARROW_NUM_THREADS=1
+
+# Supply the DINOv3-B/16 timm checkpoint from a source you can access.
+export DINOV3_CHECKPOINT=/path/to/dinov3-b16/model.safetensors
+
+# Download and verify ImageNet-A and ImageNetV2; install the included support plan.
+python -m experiments.fx_research.imagenet_ours_prepare
+
+# In two terminals, start the resumable support download and the experiment queue.
+python -u -m experiments.fx_research.imagenet_support_api
+python -u -m experiments.fx_research.imagenet_ours_queue
+```
+
+The queue prefers an entirely idle GPU and will run source extraction and both predictors once support is complete. To explicitly permit sharing physical GPU 2 or 4, set `IMAGENET_SHARED_GPUS=2,4` before launching the queue. Check available VRAM and other users' jobs before doing so. The API may respond with HTTP 429 or 500; the downloader backs off and resumes, and the running experiment is not complete until `train_support_complete.json` exists. Existing images are reused when restarted.
+
+Predictions and one-seed accuracy/pseudo-precision CSV files are written under `results/reproduction_ood_table2/ours_imagenet16/`. ImageNet-A uses its known 200-class output space; ImageNetV2 uses 1,000 classes. Target ground-truth labels are read only after predictions are frozen. Results from one seed do not provide a standard deviation. Neither Ours nor patch-local has completed on these two targets in the original run; this code has not yet been validated by an end-to-end GPU run.
+
